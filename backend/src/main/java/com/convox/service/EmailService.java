@@ -29,7 +29,9 @@ public class EmailService {
             
             mailSender.send(message);
         } catch (Exception e) {
-            throw new RuntimeException("We couldn't send the code to your Gmail. Please check your connection or try again later.");
+            System.err.println("ERROR SENDING EMAIL: " + e.getMessage());
+            e.printStackTrace();
+            throw new RuntimeException("Email failed: " + e.getMessage());
         }
     }
 }
