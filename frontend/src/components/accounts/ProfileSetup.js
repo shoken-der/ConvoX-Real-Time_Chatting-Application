@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../contexts/AuthContext";
-import { User, Check, RefreshCw, AlertCircle } from "lucide-react";
+import { User, Check, RefreshCw } from "lucide-react";
 import axios from "axios";
 
 const AVATAR_POOL = [
@@ -76,7 +76,7 @@ export default function ProfileSetup() {
       if (!token) throw new Error("Authentication token missing. Please login again.");
 
 
-      const response = await axios.post(`${API_BASE_URL}/api/user/update-profile`, {
+      await axios.post(`${API_BASE_URL}/api/user/update-profile`, {
         displayName: displayName.trim(),
         photoUrl: selectedAvatar
       }, {
@@ -91,7 +91,7 @@ export default function ProfileSetup() {
       setStatus({ type: "success", message: "Profile saved! Redirecting..." });
       
       // Refresh user context
-      const updatedUser = await refreshUser();
+      await refreshUser();
       
       // Small delay to let the user see the success message
       setTimeout(() => {

@@ -240,7 +240,7 @@ const Message = memo(({ message, self, senderUser, onReply, socket, receiverId, 
                 </div>
                 {message.replyTo.imageUrl && (
                   <div className="w-10 h-10 rounded-lg overflow-hidden shrink-0 border border-white/5 shadow-sm">
-                    <img src={message.replyTo.imageUrl} alt="Replying to image" className="w-full h-full object-cover" />
+                    <img src={message.replyTo.imageUrl} alt="Reply preview" className="w-full h-full object-cover" />
                   </div>
                 )}
               </div>
