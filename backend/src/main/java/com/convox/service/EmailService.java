@@ -1,37 +1,58 @@
 package com.convox.service;
 
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.mail.SimpleMailMessage;
-import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 
 @Service
 public class EmailService {
 
-    @Autowired
-    private JavaMailSender mailSender;
+    @Value("${BREVO_API_KEY:}")
+    private String brevoApiKey;
 
-    @org.springframework.beans.factory.annotation.Value("${spring.mail.username}")
+    @Value("${MAIL_USERNAME:}")
     private String fromEmail;
 
     @Async
     public void sendVerificationEmail(String to, String code) {
+        if (brevoApiKey == null || brevoApiKey.isEmpty()) {
+            System.err.println("BREVO_API_KEY is missing! Cannot send email.");
+            return;
+        }
+
         try {
-            SimpleMailMessage message = new SimpleMailMessage();
-            message.setFrom("ConvoX Team <" + fromEmail + ">");
-            message.setTo(to);
-            message.setSubject("Verify your ConvoX Account");
-            message.setText("Welcome to ConvoX!\n\n" +
-                    "Your verification code is: " + code + "\n\n" +
-                    "This code will expire in 10 minutes.\n\n" +
-                    "If you did not request this code, please ignore this email.");
-            
-            mailSender.send(message);
+            URL url = new URL("https://api.brevo.com/v3/smtp/email");
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("POST");
+            conn.setRequestProperty("api-key", brevoApiKey);
+            conn.setRequestProperty("Content-Type", "application/json");
+            conn.setDoOutput(true);
+
+            String jsonPayload = "{"
+                + "\"sender\":{\"name\":\"ConvoX Team\",\"email\":\"" + fromEmail + "\"},"
+                + "\"to\":[{\"email\":\"" + to + "\"}],"
+                + "\"subject\":\"Verify your ConvoX Account\","
+                + "\"textContent\":\"Welcome to ConvoX! Your verification code is: " + code + "\""
+                + "}";
+
+            try (OutputStream os = conn.getOutputStream()) {
+                byte[] input = jsonPayload.getBytes(StandardCharsets.UTF_8);
+                os.write(input, 0, input.length);
+            }
+
+            int responseCode = conn.getResponseCode();
+            if (responseCode >= 200 && responseCode < 300) {
+                System.out.println("Email sent successfully via Brevo API!");
+            } else {
+                System.err.println("Brevo API error: " + responseCode);
+            }
         } catch (Exception e) {
-            System.err.println("ERROR SENDING EMAIL: " + e.getMessage());
+            System.err.println("REST EMAIL ERROR: " + e.getMessage());
             e.printStackTrace();
-            throw new RuntimeException("Email failed: " + e.getMessage());
         }
     }
 }
