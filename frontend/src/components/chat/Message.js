@@ -1,19 +1,20 @@
 import { useState, useRef, useEffect, useMemo, memo } from "react";
-import { format } from "timeago.js";
-import {
-  EmojiHappyIcon as EmojiHappyOutline,
-  DocumentDownloadIcon,
-  DocumentIcon,
-  ReplyIcon,
-  TrashIcon,
-} from "@heroicons/react/outline";
-import { EmojiHappyIcon as EmojiHappySolid, CheckIcon } from "@heroicons/react/solid";
+import { 
+  Reply, 
+  Trash2, 
+  Smile, 
+  Download,
+  FileText,
+  Check,
+  CheckCheck
+} from "lucide-react";
 import { toggleReaction, deleteMessage, editMessage } from "../../services/ChatService";
 
-const Message = memo(({ message, self, onReply, socket, receiverId, onMessageUpdated, onImageClick }) => {
-  const isSelf = self === message.sender;
+const Message = memo(({ message, self, senderUser, onReply, socket, receiverId, onMessageUpdated, onImageClick }) => {
+  const isDeleted = message.isDeleted || message.deleted;
+  const senderId = message.sender?.id || message.senderId || message.sender;
+  const isSelf = Boolean(self && senderId && String(self) === String(senderId));
   const [showReactions, setShowReactions] = useState(false);
-  const [showMobileActions, setShowMobileActions] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editText, setEditText] = useState(message.message || "");
   const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
@@ -22,44 +23,56 @@ const Message = memo(({ message, self, onReply, socket, receiverId, onMessageUpd
   useEffect(() => {
     if (isEditing && editInputRef.current) {
       editInputRef.current.focus();
-      editInputRef.current.setSelectionRange(editText.length, editText.length);
     }
   }, [isEditing]);
 
-  // Check if edit is still allowed (10 min window)
-  const isEditAllowed = () => {
-    if (!message.createdAt) return false;
-    const diffMs = Date.now() - new Date(message.createdAt).getTime();
-    return diffMs < 10 * 60 * 1000;
-  };
-
   const handleReaction = async (emoji) => {
     try {
-      const res = await toggleReaction(message._id, { userId: self, emoji });
-      if (res && res.reactions) {
-        onMessageUpdated && onMessageUpdated({ ...res });
-        socket.current.emit("reaction", {
-          senderId: self,
-          receiverId,
-          messageId: message._id,
-          emoji,
-          reactions: res.reactions,
-        });
+      const res = await toggleReaction(message.id, { userId: self, emoji });
+      if (res && res.reactions !== undefined) {
+        onMessageUpdated && onMessageUpdated(res);
+        // Broadcast reaction update to other user via STOMP
+        if (socket?.current?.connected) {
+          socket.current.publish({
+            destination: "/app/chat.reaction",
+            body: JSON.stringify({
+              type: "REACTION",
+              chatRoomId: message.chatRoomId,
+              messageId: message.id,
+              reactions: res.reactions,
+            }),
+          });
+        }
       }
+      setShowReactions(false);
     } catch (err) {
       console.error("Error toggling reaction:", err);
     }
   };
 
   const handleDelete = async () => {
+    // Optimistic update: show "This message was deleted" instantly
+    onMessageUpdated && onMessageUpdated({ 
+      ...message,
+      isDeleted: true, 
+      content: isSelf ? "You deleted this message" : "This message was deleted",
+      imageUrl: null 
+    });
+    
     try {
-      const res = await deleteMessage(message._id);
-      onMessageUpdated && onMessageUpdated(res);
-      socket.current.emit("deleteMessage", {
-        messageId: message._id,
-        receiverId,
-        updatedMessage: res,
-      });
+      await deleteMessage(message.id, self);
+      // Broadcast delete event to other user via STOMP
+      if (socket?.current?.connected) {
+        socket.current.publish({
+          destination: "/app/chat.deleteMessage",
+          body: JSON.stringify({
+            type: "DELETE",
+            chatRoomId: message.chatRoomId,
+            messageId: message.id,
+            receiverId,
+          }),
+        });
+      }
     } catch (err) {
       console.error("Failed to delete message:", err);
     }
@@ -72,14 +85,19 @@ const Message = memo(({ message, self, onReply, socket, receiverId, onMessageUpd
     }
     setIsSubmittingEdit(true);
     try {
-      const res = await editMessage(message._id, editText.trim());
+      const res = await editMessage(message.id, editText.trim());
       onMessageUpdated && onMessageUpdated(res);
-      socket.current.emit("editMessage", {
-        messageId: message._id,
-        message: res.message,
-        receiverId,
-        updatedMessage: res,
-      });
+      if (socket?.current?.connected) {
+        socket.current.publish({
+          destination: "/app/chat.editMessage",
+          body: JSON.stringify({
+            type: "EDIT",
+            chatRoomId: message.chatRoomId,
+            messageId: message.id,
+            content: res.content || editText.trim(),
+          }),
+        });
+      }
       setIsEditing(false);
     } catch (err) {
       console.error("Edit error:", err);
@@ -87,15 +105,6 @@ const Message = memo(({ message, self, onReply, socket, receiverId, onMessageUpd
     setIsSubmittingEdit(false);
   };
 
-
-
-  const getNameColor = (senderId) => {
-    const colors = ["text-emerald-500", "text-blue-500", "text-amber-500", "text-rose-500", "text-secondary-500"];
-    const index = parseInt(senderId?.substring(0, 2) || "0", 16) % colors.length;
-    return colors[isNaN(index) ? 0 : index];
-  };
-
-  // Emoji reaction grouping - Memoized for performance
   const groupedReactions = useMemo(() => {
     return message.reactions?.reduce((acc, r) => {
       if (!acc[r.emoji]) acc[r.emoji] = [];
@@ -104,233 +113,222 @@ const Message = memo(({ message, self, onReply, socket, receiverId, onMessageUpd
     }, {}) || {};
   }, [message.reactions]);
 
-  const renderFile = () => {
-    if (!message.fileUrl || message.isDeleted) return null;
+  const text =
+    message.content ||
+    message.text ||
+    message.message ||
+    "";
 
-    if (message.fileType?.startsWith("image/")) {
+  const imageUrl =
+    message.imageUrl ||
+    message.mediaUrl ||
+    message.fileUrl ||
+    message.attachmentUrl ||
+    "";
+
+  const renderFile = () => {
+    // Show spinner if we're explicitly uploading/receiving,
+    // even if imageUrl hasn't arrived yet.
+    const isReceivingFile = message.isUploading === true || message.isUploading === "true";
+
+    if (isReceivingFile && !imageUrl) {
+      // Phase 1: receiver is waiting for the real image
       return (
         <div
-          className="mt-2 mb-1 rounded-xl overflow-hidden shadow-premium-sm border border-slate-200/50 dark:border-neutral-700/50 group/file cursor-pointer"
-          onClick={() => onImageClick && onImageClick(message.fileUrl)}
+          className={`relative rounded-xl overflow-hidden ${isSelf ? 'border border-[#635BFF]/30' : 'border border-[#2A3245]'} ${text ? "mb-1.5" : ""}`}
         >
-          <img
-            src={message.fileUrl}
-            alt="Shared media"
-            className="max-h-72 w-full object-cover hover:scale-105 transition-transform duration-500"
-          />
+          <div className="w-[220px] h-[160px] bg-[#111827] flex flex-col items-center justify-center gap-3">
+            <div className="w-8 h-8 border-2 border-[#635BFF]/30 border-t-[#635BFF] rounded-full animate-spin" />
+            <span className="text-[10px] font-bold text-[#635BFF] uppercase tracking-widest animate-pulse">Receiving...</span>
+          </div>
         </div>
       );
     }
 
-    if (message.fileType?.startsWith("video/")) {
+    if (!imageUrl || isDeleted) return null;
+
+    const isImage = message.fileType?.startsWith("image/") || 
+                    imageUrl.startsWith("data:image/") ||
+                    imageUrl.match(/\.(jpeg|jpg|gif|png|webp)$/i) ||
+                    imageUrl.includes("picsum.photos");
+
+    if (isImage) {
+      // Only show spinner for sender's own upload still in progress
+      const isLoading = isSelf && message.isUploading;
+
       return (
-        <div className="mt-2 mb-1 rounded-xl overflow-hidden shadow-premium-sm">
-          <video controls className="w-full max-h-72">
-            <source src={message.fileUrl} type={message.fileType} />
-          </video>
+        <div
+          className={`relative rounded-xl overflow-hidden cursor-pointer group/img ${isSelf ? 'border border-[#635BFF]/30' : 'border border-[#2A3245]'} ${text ? "mb-1.5" : ""}`}
+          onClick={() => !isLoading && onImageClick && onImageClick(imageUrl)}
+        >
+          {isLoading ? (
+            <div className="w-[220px] h-[160px] bg-[#111827] flex flex-col items-center justify-center gap-3">
+              <div className="w-8 h-8 border-2 border-[#635BFF]/30 border-t-[#635BFF] rounded-full animate-spin" />
+              <span className="text-[10px] font-bold text-[#635BFF] uppercase tracking-widest animate-pulse">Uploading...</span>
+            </div>
+          ) : (
+            <img
+              src={imageUrl}
+              alt="Shared media"
+              className="w-full max-w-[220px] object-cover transition-transform duration-500 group-hover/img:scale-105"
+              onError={(e) => {
+                 e.target.src = "https://via.placeholder.com/400?text=Image+Load+Error";
+              }}
+            />
+          )}
+          <div className="absolute bottom-2 right-2 bg-[#0B0C10]/70 backdrop-blur-md px-2 py-1 rounded-lg flex items-center gap-1">
+             <span className="text-[10px] text-[#F9FAFB] font-medium">
+               {message.createdAt ? new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ""}
+             </span>
+             {isSelf && (
+               <div className="flex ml-0.5 text-[#635BFF]">
+                 {message.seenBy?.length > 0 ? <CheckCheck size={12} /> : <Check size={12} />}
+               </div>
+             )}
+          </div>
+          {!isLoading && <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/10 transition-colors duration-300" />}
         </div>
       );
     }
 
     return (
-      <div
-        className={`mt-2 mb-1 flex items-center gap-3 p-3 rounded-xl border ${
-          isSelf ? "bg-white/10 border-white/20" : "bg-slate-50 dark:bg-neutral-900 border-slate-100 dark:border-neutral-800"
-        }`}
-      >
-        <div className="p-2 bg-primary-500/10 rounded-lg">
-          <DocumentIcon className="h-6 w-6 text-primary-600" />
+      <div className={`mt-2 mb-1 flex items-center gap-3 p-3 rounded-2xl ${isSelf ? "bg-white/10 border border-white/10" : "bg-surface border border-border/40"}`}>
+        <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${isSelf ? "bg-white/20 text-white" : "bg-surface-elevated text-primary shadow-sm"}`}>
+          <FileText size={20} />
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-bold truncate">File Attachment</p>
-          {message.fileSize && (
-            <p className="text-[10px] opacity-60">{(message.fileSize / 1024 / 1024).toFixed(2)} MB</p>
-          )}
+          <p className="text-sm font-bold truncate">Document</p>
+          <p className="text-[10px] opacity-80 font-medium uppercase tracking-tight">{(message.fileSize / 1024).toFixed(1)} KB</p>
         </div>
-        <a
-          href={message.fileUrl}
-          target="_blank"
-          rel="noreferrer"
-          className="p-2 hover:bg-slate-200 dark:hover:bg-neutral-800 rounded-lg transition-colors"
-        >
-          <DocumentDownloadIcon className="h-5 w-5" />
+        <a href={imageUrl} target="_blank" rel="noreferrer" className="p-2 hover:bg-black/10 rounded-full transition-colors">
+          <Download size={18} />
         </a>
       </div>
     );
   };
 
-  return (
-    <div className={`p-1 flex flex-col ${isSelf ? "items-end" : "items-start"} mb-[2px] animate-subtle-in`}>
-      <div className="flex items-end gap-2 max-w-[88%] md:max-w-[80%] relative group/msg">
-        {/* Bubble */}
-        <div
-          className={`
-            relative px-2.5 py-1.5 shadow-[0_1px_0.5px_rgba(11,20,26,0.13)] transition-all duration-300 cursor-pointer md:cursor-default
-            ${
-              isSelf
-                ? "bg-[#d9fdd3] dark:bg-[#005c4b] text-[#111b21] dark:text-[#e9edef] rounded-md rounded-tr-none"
-                : "bg-[#ffffff] dark:bg-[#202c33] text-[#111b21] dark:text-[#e9edef] rounded-md rounded-tl-none"
-            }
-            ${message.isDeleted ? "opacity-50 italic text-[12px]" : ""}
-          `}
-          onClick={() => {
-            if (window.innerWidth < 768 && !message.isDeleted) {
-              setShowMobileActions(!showMobileActions);
-            }
-          }}
-        >
-          {/* Hover Actions - Horizontal Row at TOP with Conditional Visibility */}
-          {!message.isDeleted && (
-            <div
-              className={`
-                absolute top-1 transition-all duration-200 z-40 flex flex-row items-center gap-1.5
-                ${showMobileActions ? "opacity-100 visible" : "opacity-0 invisible md:group-hover/msg:opacity-100 md:group-hover/msg:visible"}
-                ${isSelf ? "right-full mr-2" : "left-full ml-2"}
-              `}
-            >
-              {isSelf ? (
-                <>
-                  {/* Sender Order: Delete -> Reply -> Reaction */}
-                  <button 
-                    onClick={handleDelete} 
-                    title="Delete" 
-                    className="p-1.5 rounded-full bg-white/10 dark:bg-neutral-800/80 hover:bg-rose-50 dark:hover:bg-rose-900/40 text-slate-500 dark:text-[#8696a0] hover:text-rose-500 transition-colors border border-transparent shadow-sm"
-                  >
-                    <TrashIcon className="h-[18px] w-[18px]" />
-                  </button>
+    const isImageOnly = imageUrl && !text && !isDeleted;
 
-                  <button 
-                    onClick={onReply} 
-                    title="Reply" 
-                    className="p-1.5 rounded-full bg-white/10 dark:bg-neutral-800/80 hover:bg-slate-200 dark:hover:bg-neutral-700 text-slate-500 dark:text-[#8696a0] transition-colors border border-transparent shadow-sm"
-                  >
-                    <ReplyIcon className="h-[18px] w-[18px]" />
-                  </button>
-
-                  <div className="relative group/re">
-                    <button 
-                      onClick={() => setShowReactions(!showReactions)} 
-                      title="React" 
-                      className={`p-1.5 rounded-full transition-all border border-transparent shadow-sm ${showReactions ? "bg-amber-100 dark:bg-amber-900/40 text-amber-600 scale-110" : "bg-white/10 dark:bg-neutral-800/80 hover:bg-slate-200 dark:hover:bg-neutral-700 text-slate-500 dark:text-[#8696a0]"}`}
-                    >
-                      <EmojiHappyOutline className="h-5 w-5" />
-                    </button>
-                    {showReactions && (
-                      <div className={`absolute bottom-full mb-2 right-0 flex items-center gap-1 bg-white/95 dark:bg-[#202c33]/95 backdrop-blur-md p-1.5 rounded-full shadow-lg border border-slate-200/50 dark:border-[#222d34] z-[60] animate-in zoom-in-75 slide-in-from-bottom-2`}>
-                        {["❤️", "👍", "🔥", "😂", "😮", "😢"].map((emoji) => (
-                          <button key={emoji} onClick={() => handleReaction(emoji)} className="hover:scale-125 hover:-translate-y-1 transition-all p-1.5 text-lg active:scale-90">
-                            {emoji}
-                          </button>
-                        ))}
-                      </div>
-                    )}
+    return (
+    <div className={`flex flex-col ${isSelf ? "items-end" : "items-start"} mb-4 group/msg w-full animate-fade-in`}>
+      <div className={`flex items-end gap-2.5 w-full max-w-[65%] ${isSelf ? "justify-end" : "justify-start"} relative`}>
+        {!isSelf && (
+           <div className="w-8 h-8 rounded-xl overflow-hidden mb-1 flex-shrink-0 shadow-sm ring-2 ring-[#2A3245] ring-offset-2 ring-offset-[#0F1321] bg-[#2A3245] animate-pulse">
+             <img src={senderUser?.photoUrl || `https://ui-avatars.com/api/?name=${message.senderName || senderUser?.displayName || 'User'}&background=635BFF&color=fff`} alt="" className="w-full h-full object-cover" onLoad={(e) => e.target.parentElement.classList.remove('animate-pulse')} />
+           </div>
+        )}
+        
+        <div className="relative group/bubble">
+          <div
+            className={`
+              transition-all duration-300
+              ${isImageOnly ? "p-0 bg-transparent" : "px-3 py-2"}
+              ${isSelf 
+                ? (isImageOnly ? "" : "bg-gradient-to-br from-[#635BFF] to-[#6B4FFF] text-white rounded-[16px] rounded-br-[4px] shadow-sm shadow-[#635BFF]/10") 
+                : (isImageOnly ? "" : "bg-[#1F2937] border border-[#2A3245] text-[#F9FAFB] rounded-[16px] rounded-bl-[4px]")
+              }
+              ${isDeleted ? "opacity-50 italic text-sm" : ""}
+            `}
+          >
+            {message.replyTo && !isDeleted && (
+              <div className={`mb-2 p-2 rounded-xl text-[12px] border-l-4 flex items-center justify-between gap-3 ${isSelf ? "bg-white/10 border-white/40 text-white/90" : "bg-surface border-primary/30 text-text-secondary"}`}>
+                <div className="flex-1 min-w-0">
+                  <p className="truncate font-semibold mb-0.5 opacity-70">Replying to</p>
+                  <p className="truncate italic font-medium">
+                    {message.replyTo.imageUrl && !message.replyTo.content ? "📷 Photo" : (message.replyTo.content || message.replyTo.message)}
+                  </p>
+                </div>
+                {message.replyTo.imageUrl && (
+                  <div className="w-10 h-10 rounded-lg overflow-hidden shrink-0 border border-white/5 shadow-sm">
+                    <img src={message.replyTo.imageUrl} alt="Replying to image" className="w-full h-full object-cover" />
                   </div>
-                </>
-              ) : (
-                <>
-                  {/* Receiver Order: Reaction -> Reply */}
-                  <div className="relative group/re">
-                    <button 
-                      onClick={() => setShowReactions(!showReactions)} 
-                      title="React" 
-                      className={`p-1.5 rounded-full transition-all border border-transparent shadow-sm ${showReactions ? "bg-amber-100 dark:bg-amber-900/40 text-amber-600 scale-110" : "bg-white/10 dark:bg-neutral-800/80 hover:bg-slate-200 dark:hover:bg-neutral-700 text-slate-500 dark:text-[#8696a0]"}`}
-                    >
-                      <EmojiHappyOutline className="h-5 w-5" />
-                    </button>
-                    {showReactions && (
-                      <div className={`absolute bottom-full mb-2 left-0 flex items-center gap-1 bg-white/95 dark:bg-[#202c33]/95 backdrop-blur-md p-1.5 rounded-full shadow-lg border border-slate-200/50 dark:border-[#222d34] z-[60] animate-in zoom-in-75 slide-in-from-bottom-2`}>
-                        {["❤️", "👍", "🔥", "😂", "😮", "😢"].map((emoji) => (
-                          <button key={emoji} onClick={() => handleReaction(emoji)} className="hover:scale-125 hover:-translate-y-1 transition-all p-1.5 text-lg active:scale-90">
-                            {emoji}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                )}
+              </div>
+            )}
 
-                  <button 
-                    onClick={onReply} 
-                    title="Reply" 
-                    className="p-1.5 rounded-full bg-white/10 dark:bg-neutral-800/80 hover:bg-slate-200 dark:hover:bg-neutral-700 text-slate-500 dark:text-[#8696a0] transition-colors border border-transparent shadow-sm"
-                  >
-                    <ReplyIcon className="h-[18px] w-[18px]" />
-                  </button>
-                </>
+            {renderFile()}
+
+            {isEditing ? (
+              <div className="space-y-2 min-w-[200px]">
+                <textarea
+                  ref={editInputRef}
+                  value={editText}
+                  onChange={(e) => setEditText(e.target.value)}
+                  className="w-full bg-transparent border-none p-0 text-inherit focus:ring-0 resize-none font-medium"
+                  rows={2}
+                />
+                <div className="flex gap-2 justify-end pt-2 border-t border-white/10">
+                  <button onClick={() => setIsEditing(false)} className="text-[10px] uppercase font-bold opacity-60 hover:opacity-100">Cancel</button>
+                  <button onClick={handleEditSubmit} disabled={isSubmittingEdit} className="text-[10px] uppercase font-bold hover:scale-105">Save</button>
+                </div>
+              </div>
+            ) : (
+              <>
+                {!text && !imageUrl && !message.fileType && !isDeleted && (
+                  <p className="text-sm opacity-70">Unsupported message</p>
+                )}
+                {text && (
+                  <div className="flex items-end justify-between gap-3 min-w-[60px]">
+                    <p className="text-[14px] leading-relaxed break-words whitespace-pre-wrap">
+                      {isDeleted 
+                        ? (isSelf ? "You deleted this message" : "This message was deleted") 
+                        : text}
+                    </p>
+                    <div className={`flex items-center gap-1 shrink-0 relative top-1 ${isSelf ? "text-white/80" : "text-[#6B7280]"}`}>
+                       {message.isEdited && <span className="text-[9px] italic mr-0.5">Edited</span>}
+                       <span className="text-[10px] font-medium">
+                         {message.createdAt && !isNaN(new Date(message.createdAt).getTime()) ? new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ""}
+                       </span>
+                       {isSelf && (
+                         <div className="flex ml-0.5">
+                           {message.seenBy?.length > 0 ? <CheckCheck size={12} /> : <Check size={12} />}
+                         </div>
+                       )}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          {/* Actions on hover */}
+          {!isDeleted && (
+            <div className={`absolute top-0 opacity-0 group-hover/bubble:opacity-100 transition-all duration-200 flex items-center gap-1 ${isSelf ? "right-full mr-3" : "left-full ml-3"}`}>
+              <button onClick={onReply} className="p-2 rounded-xl hover:bg-surface-elevated text-text-muted hover:text-text-main transition-colors shadow-sm bg-surface border border-border/40"><Reply size={16} /></button>
+              
+              <div className="relative">
+                <button onClick={() => setShowReactions(!showReactions)} className="p-2 rounded-xl hover:bg-surface-elevated text-text-muted hover:text-text-main transition-colors shadow-sm bg-surface border border-border/40"><Smile size={16} /></button>
+                {showReactions && (
+                  <div className={`absolute bottom-full mb-3 flex items-center gap-1 bg-surface-elevated p-2 rounded-[16px] shadow-premium-lg border border-border/60 z-[60] animate-zoom-in ${isSelf ? "right-0" : "left-0"}`}>
+                    {["❤️", "👍", "🔥", "😂", "😮", "😢"].map((emoji) => (
+                      <button key={emoji} onClick={() => handleReaction(emoji)} className="hover:scale-125 transition-transform p-2 text-xl hover:bg-surface-hover rounded-xl">
+                        {emoji}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {isSelf && (
+                <button
+                  onClick={handleDelete}
+                  className="p-2 rounded-xl hover:bg-danger/10 text-text-muted hover:text-danger transition-colors shadow-sm bg-surface border border-border/40"
+                  title="Delete message"
+                >
+                  <Trash2 size={16} />
+                </button>
               )}
             </div>
           )}
 
-          {/* Reply Context - cleaner look */}
-          {message.replyTo && !message.isDeleted && (
-            <div className={`mb-1 p-2 rounded-md text-[13px] border-l-[4px] relative overflow-hidden ${
-                isSelf ? "bg-[#cbf4c6] dark:bg-[#025042] border-[#25d366]" : "bg-[#f0f2f5] dark:bg-[#111b21] border-[#31a24c]"
-              }`}
-            >
-              <span className={`font-semibold block text-[13px] mb-0.5 ${isSelf ? "text-[#025042] dark:text-[#25d366]" : "text-[#31a24c] dark:text-[#31a24c]"}`}>
-                {message.replyTo.sender === self ? "You" : "Reply"}
-              </span>
-              <p className="truncate opacity-80 italic">
-                {message.replyTo.message || "Media Attachment"}
-              </p>
-            </div>
-          )}
-
-          {/* Media */}
-          {renderFile()}
-
-          {/* Message Text / Edit Input */}
-          {isEditing ? (
-            <div className="space-y-2 min-w-[200px] py-1">
-              <textarea
-                ref={editInputRef}
-                value={editText}
-                onChange={(e) => setEditText(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleEditSubmit(); }
-                  if (e.key === "Escape") setIsEditing(false);
-                }}
-                className="block w-full bg-white/10 text-white placeholder-white/40 border border-white/20 rounded-xl px-3 py-2 text-[12.5px] resize-none focus:outline-none focus:ring-1 focus:ring-white/30"
-                rows={2}
-              />
-              <div className="flex gap-2 justify-end">
-                <button onClick={() => setIsEditing(false)} className="text-[10px] font-bold px-3 py-1 transparent hover:underline text-white">Cancel</button>
-                <button onClick={handleEditSubmit} disabled={isSubmittingEdit} className="text-[10px] font-extrabold px-3 py-1 bg-white text-primary-600 rounded-lg shadow-sm hover:scale-105 transition-transform active:scale-95">SAVE</button>
-              </div>
-            </div>
-          ) : (
-            message.message && (
-              <span className={`block text-[14.2px] leading-[19px] break-words text-[#111b21] dark:text-[#e9edef] ${message.isDeleted ? "text-opacity-60 italic" : ""}`}>
-                {message.message}
-              </span>
-            )
-          )}
-
-          {/* Meta Info: Time + Edit Label + Status */}
-          <div className="flex items-center justify-end gap-1 mt-0.5 select-none float-right ml-3 text-[#667781] dark:text-[#8696a0]">
-            {message.isEdited && !message.isDeleted && (
-              <span className="text-[10px] italic mr-1">Edited</span>
-            )}
-            <span className="text-[10px] tabular-nums leading-none">
-              {new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-            </span>
-            {isSelf && !message.isDeleted && (
-              <div className={`flex items-center transition-all ml-0.5 ${message.seenBy?.length > 0 ? "text-[#53bdeb]" : ""}`}>
-                <CheckIcon className="h-3 w-3" />
-                {message.seenBy?.length > 0 && <CheckIcon className="-ml-2 h-3 w-3" />}
-              </div>
-            )}
-          </div>
-
-
-
-          {/* Reaction Pills - Miniature Version */}
-          {Object.keys(groupedReactions).length > 0 && !message.isDeleted && (
-            <div className={`absolute -bottom-2.5 flex items-center gap-0.5 bg-white/95 dark:bg-neutral-900 border border-slate-200/50 dark:border-neutral-800 rounded-full px-1.5 py-0.5 shadow-lg transition-all hover:scale-110 z-10 ${isSelf ? "right-1" : "left-1"}`}>
+          {/* Reactions */}
+          {Object.keys(groupedReactions).length > 0 && !isDeleted && (
+            <div className={`absolute -bottom-2.5 flex gap-1 bg-surface-elevated border border-border/50 rounded-full px-2 py-1 shadow-premium ${isSelf ? "right-4" : "left-4"}`}>
               {Object.entries(groupedReactions).map(([emoji, users]) => (
-                <div key={emoji} className="flex items-center gap-0.5 px-0.5">
-                  <span className="text-[11px] scale-90">{emoji}</span>
-                  {users.length > 1 && <span className="text-[9px] font-black text-slate-500">{users.length}</span>}
-                </div>
+                <button key={emoji} onClick={() => handleReaction(emoji)} className="flex items-center gap-1 hover:scale-110 transition-transform">
+                  <span className="text-[12px]">{emoji}</span>
+                  {users.length > 1 && <span className="text-[9px] font-black text-text-muted">{users.length}</span>}
+                </button>
               ))}
             </div>
           )}

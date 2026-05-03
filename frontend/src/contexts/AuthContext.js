@@ -1,48 +1,135 @@
 import { createContext, useContext, useState, useEffect } from "react";
-import {
-  createUserWithEmailAndPassword,
-  signInWithEmailAndPassword,
-  signOut,
-  updateProfile,
-} from "firebase/auth";
-
-import auth from "../config/firebase";
+import axios from "axios";
 
 const AuthContext = createContext();
+
+const API_BASE_URL = (process.env.REACT_APP_API_URL && process.env.REACT_APP_API_URL.trim()) || "http://localhost:8080";
 
 export function useAuth() {
   return useContext(AuthContext);
 }
 
 export function AuthProvider({ children }) {
-  const [currentUser, setCurrentUser] = useState();
+  const [currentUser, setCurrentUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  function register(email, password) {
-    return createUserWithEmailAndPassword(auth, email, password);
-  }
+  const register = async (email, password) => {
+    try {
+      await axios.post(`${API_BASE_URL}/api/auth/register`, {
+        email, password
+      });
+      return { pending: true };
+    } catch (err) {
+      setError(err.response?.data?.message || "Registration failed");
+      throw err;
+    }
+  };
 
-  function login(email, password) {
-    return signInWithEmailAndPassword(auth, email, password);
-  }
+  const login = async (email, password) => {
+    try {
+      const response = await axios.post(`${API_BASE_URL}/api/auth/login`, {
+        email, password
+      });
+      const { token, user } = response.data;
+      localStorage.setItem("token", token);
+      localStorage.setItem("user", JSON.stringify(user));
+      setCurrentUser(user);
+      return user;
+    } catch (err) {
+      setError(err.response?.data?.message || "Login failed");
+      throw err;
+    }
+  };
+
+  const refreshUser = async () => {
+    const token = localStorage.getItem("token");
+    if (!token) return;
+    try {
+      const response = await axios.get(`${API_BASE_URL}/api/auth/me`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const user = response.data;
+      localStorage.setItem("user", JSON.stringify(user));
+      setCurrentUser(user);
+      return user;
+    } catch (err) {
+      console.error("AuthContext - Refresh failed:", err);
+      if (err.response?.status === 401) logout();
+    }
+  };
 
   function logout() {
-    return signOut(auth);
+    localStorage.removeItem("token");
+    localStorage.removeItem("user");
+    setCurrentUser(null);
+    setError("");
   }
 
-  function updateUserProfile(user, profile) {
-    return updateProfile(user, profile);
+  function clearAuth() {
+    localStorage.removeItem("token");
+    localStorage.removeItem("user");
+    setCurrentUser(null);
+    setError("");
   }
 
   useEffect(() => {
-    const unsubscribe = auth.onAuthStateChanged((user) => {
-      setCurrentUser(user);
-      setLoading(false);
-    });
-
-    return unsubscribe;
+    const savedUser = localStorage.getItem("user");
+    const token = localStorage.getItem("token");
+    if (savedUser && token) {
+      setCurrentUser(JSON.parse(savedUser));
+      refreshUser();
+    }
+    setLoading(false);
   }, []);
+
+  const verifyEmail = async (email, code, password) => {
+    try {
+      // First verify
+      await axios.post(`${API_BASE_URL}/api/auth/verify-email?email=${email}&code=${code}`);
+      
+      // Then auto-login so they go to Profile Setup
+      const response = await axios.post(`${API_BASE_URL}/api/auth/login`, {
+        email, password
+      });
+      
+      const { token, user } = response.data;
+      localStorage.setItem("token", token);
+      localStorage.setItem("user", JSON.stringify(user));
+      setCurrentUser(user);
+      return user;
+    } catch (err) {
+      setError(err.response?.data?.message || "Verification failed");
+      throw err;
+    }
+  };
+
+  const resendOtp = async (email) => {
+    try {
+      await axios.post(`${API_BASE_URL}/api/auth/resend-otp?email=${email}`);
+    } catch (err) {
+      setError(err.response?.data?.message || "Failed to resend code");
+      throw err;
+    }
+  };
+
+  const forgotPassword = async (email) => {
+    try {
+      await axios.post(`${API_BASE_URL}/api/auth/forgot-password?email=${email}`);
+    } catch (err) {
+      setError(err.response?.data?.message || "Failed to send reset code");
+      throw err;
+    }
+  };
+
+  const resetPassword = async (email, code, newPassword) => {
+    try {
+      await axios.post(`${API_BASE_URL}/api/auth/reset-password?email=${email}&code=${code}&newPassword=${newPassword}`);
+    } catch (err) {
+      setError(err.response?.data?.message || "Failed to reset password");
+      throw err;
+    }
+  };
 
   const value = {
     currentUser,
@@ -51,7 +138,12 @@ export function AuthProvider({ children }) {
     login,
     register,
     logout,
-    updateUserProfile,
+    clearAuth,
+    refreshUser,
+    verifyEmail,
+    resendOtp,
+    forgotPassword,
+    resetPassword
   };
 
   return (

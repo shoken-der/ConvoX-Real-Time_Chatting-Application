@@ -1,87 +1,98 @@
 import { useEffect, useRef, useCallback, useState } from "react";
-import io from "socket.io-client";
+import { initiateSocketConnection } from "../services/ChatService";
 import { useAuth } from "../contexts/AuthContext";
 
-const SOCKET_URL = (process.env.REACT_APP_SOCKET_URL && process.env.REACT_APP_SOCKET_URL.trim()) || (process.env.REACT_APP_API_URL && process.env.REACT_APP_API_URL.trim()) || "http://localhost:3001";
-
 export default function useSocket() {
-  const socket = useRef(null);
+  const stompClient = useRef(null);
   const [connected, setConnected] = useState(false);
   const { currentUser } = useAuth();
 
-  const isConnecting = useRef(false);
-
   const connect = useCallback(async () => {
-    if (socket.current?.connected) return socket.current;
-    if (!currentUser?.uid || isConnecting.current) return;
+    if (stompClient.current?.connected) return stompClient.current;
+    if (!currentUser?.id) return; // Note: using .id now, not .uid
 
     try {
-      isConnecting.current = true;
-      const token = await currentUser.getIdToken(true);
+      const client = initiateSocketConnection(currentUser.id);
       
-      const s = io(SOCKET_URL, {
-        withCredentials: true,
-        transports: ["websocket", "polling"],
-        auth: { token },
-        reconnection: true,
-        reconnectionAttempts: 5,
-        reconnectionDelay: 1000
-      });
-
-      socket.current = s;
-
-      s.on("connect", () => {
+      client.onConnect = () => {
         setConnected(true);
-        isConnecting.current = false;
-        s.emit("addUser", currentUser.uid);
-      });
+      };
 
-      s.on("disconnect", (reason) => {
+      client.onDisconnect = () => {
         setConnected(false);
-        isConnecting.current = false;
-      });
+      };
 
-      s.on("connect_error", (err) => {
+      client.onStompError = (frame) => {
+        console.error("STOMP Error", frame);
         setConnected(false);
-        isConnecting.current = false;
-      });
+      };
 
-      return s;
+      client.activate();
+      stompClient.current = client;
+      return client;
     } catch (err) {
-      isConnecting.current = false;
+      console.error("Connection error", err);
     }
-  }, [currentUser?.uid]);
+  }, [currentUser?.id]);
 
   const disconnect = useCallback(() => {
-    if (socket.current) {
-      socket.current.disconnect();
-      socket.current = null;
+    if (stompClient.current) {
+      stompClient.current.deactivate();
+      stompClient.current = null;
       setConnected(false);
     }
   }, []);
 
   const emit = useCallback((event, data) => {
-    if (socket.current && connected) {
-      socket.current.emit(event, data);
+    if (stompClient.current && connected) {
+      let destination = event;
+      
+      // Map legacy events to STOMP destinations
+      if (event === "sendMessage") destination = "chat.sendMessage";
+      else if (event === "typing") destination = "chat.typing";
+      else if (event === "stopTyping") destination = "chat.stopTyping";
+      else if (event === "reaction") destination = "chat.reaction";
+      else if (event === "editMessage") destination = "chat.editMessage";
+      else if (event === "deleteMessage") destination = "chat.deleteMessage";
+      else if (event === "markSeen") destination = "chat.markSeen";
+
+      stompClient.current.publish({
+        destination: destination.startsWith("/app") ? destination : `/app/${destination}`,
+        body: JSON.stringify(data),
+      });
     }
   }, [connected]);
 
-  const on = useCallback((event, callback) => {
-    const currentSocket = socket.current;
-    if (currentSocket) {
-      currentSocket.on(event, callback);
-      return () => currentSocket.off(event, callback);
+  const subscribe = useCallback((destination, callback) => {
+    if (stompClient.current && connected) {
+      const sub = stompClient.current.subscribe(destination, (message) => {
+        callback(JSON.parse(message.body));
+      });
+      return sub;
     }
-  }, [connected]); // Re-bind when connection status changes
+  }, [connected]);
+
+  // Shim for socket.io style 'on'
+  const on = useCallback((event, callback, chatId) => {
+    if (!chatId) return;
+    
+    let destination;
+    if (event === "getMessage") destination = `/topic/chat/${chatId}`;
+    else if (event === "typing" || event === "stopTyping") destination = `/topic/chat/${chatId}/typing`;
+    else if (event === "messageEdited") destination = `/topic/chat/${chatId}`; // Assuming edited messages come through the same topic
+    else if (event === "messageDeleted") destination = `/topic/chat/${chatId}`;
+    else if (event === "messageSeen") destination = `/topic/chat/${chatId}`;
+    else return;
+
+    return subscribe(destination, callback);
+  }, [subscribe]);
 
   useEffect(() => {
-    if (currentUser?.uid) {
+    if (currentUser?.id) {
       connect();
     }
-    // Cleanup removal to prevent disconnect on every re-render
-    // We only want to disconnect when the component unmounts globally 
-    // or when the user explicitly logs out.
-  }, [currentUser?.uid, connect]); 
+    return () => disconnect();
+  }, [currentUser?.id, connect, disconnect]);
 
-  return { socket, connected, connect, disconnect, emit, on };
+  return { socket: stompClient, connected, connect, disconnect, emit, on, subscribe };
 }

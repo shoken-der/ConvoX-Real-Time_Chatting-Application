@@ -1,32 +1,34 @@
 import axios from "axios";
-import auth from "../config/firebase";
-import { io } from "socket.io-client";
+import { Client } from "@stomp/stompjs";
+import SockJS from "sockjs-client";
 
-const API_URL = (process.env.REACT_APP_API_URL && process.env.REACT_APP_API_URL.trim()) || "http://localhost:3001";
-const baseURL = `${API_URL}/api`;
+const API_URL = (process.env.REACT_APP_API_URL && process.env.REACT_APP_API_URL.trim()) || "http://localhost:8080";
+export const baseURL = `${API_URL}/api`;
 
-console.log("ConvoX API initialized at:", baseURL);
 
-const getUserToken = async () => {
-  const user = auth.currentUser;
-  const token = user && (await user.getIdToken());
-  return token;
+const getUserToken = () => {
+  return localStorage.getItem("token");
 };
 
-export const initiateSocketConnection = async () => {
-  const token = await getUserToken();
-
-  const socket = io(API_URL, {
-    auth: {
-      token,
+export const initiateSocketConnection = (userId) => {
+  const stompClient = new Client({
+    webSocketFactory: () => new SockJS(`${API_URL}/ws`),
+    connectHeaders: {
+      userId: userId ? userId.toString() : null
     },
+    debug: (str) => {
+      // Quiet STOMP logs in production
+    },
+    reconnectDelay: 5000,
+    heartbeatIncoming: 4000,
+    heartbeatOutgoing: 4000,
   });
 
-  return socket;
+  return stompClient;
 };
 
-const createHeader = async () => {
-  const token = await getUserToken();
+const createHeader = () => {
+  const token = getUserToken();
 
   const payloadHeader = {
     headers: {
@@ -38,18 +40,20 @@ const createHeader = async () => {
 };
 
 export const getAllUsers = async () => {
-  const header = await createHeader();
+  const header = createHeader();
 
   try {
     const res = await axios.get(`${baseURL}/user`, header);
     return res.data || [];
+    return res.data || [];
   } catch (e) {
+    console.error("ChatService - Get All Users Error:", e.response?.data || e.message);
     return [];
   }
 };
 
 export const getUser = async (userId) => {
-  const header = await createHeader();
+  const header = createHeader();
 
   try {
     const res = await axios.get(`${baseURL}/user/${userId}`, header);
@@ -60,23 +64,24 @@ export const getUser = async (userId) => {
   }
 };
 
-export const getUsers = async (users) => {
-  const header = await createHeader();
+export const searchUsers = async (query) => {
+  const header = createHeader();
 
   try {
-    const res = await axios.post(`${baseURL}/user/users`, users, header);
+    const res = await axios.post(`${baseURL}/user/search`, { query }, header);
     return res.data || [];
   } catch (e) {
-    console.error("Get Users Error:", e);
+    console.error("Search Users Error:", e);
     return [];
   }
 };
 
 export const getChatRooms = async (userId) => {
-  const header = await createHeader();
+  const header = createHeader();
 
   try {
     const res = await axios.get(`${baseURL}/room/${userId}`, header);
+    return res.data || [];
     return res.data || [];
   } catch (e) {
     console.error("ChatService - Get Chat Rooms Error:", e.response?.data || e.message);
@@ -85,7 +90,7 @@ export const getChatRooms = async (userId) => {
 };
 
 export const getChatRoomOfUsers = async (firstUserId, secondUserId) => {
-  const header = await createHeader();
+  const header = createHeader();
 
   try {
     const res = await axios.get(
@@ -100,7 +105,7 @@ export const getChatRoomOfUsers = async (firstUserId, secondUserId) => {
 };
 
 export const createChatRoom = async (members) => {
-  const header = await createHeader();
+  const header = createHeader();
 
   try {
     const res = await axios.post(`${baseURL}/room`, members, header);
@@ -112,10 +117,11 @@ export const createChatRoom = async (members) => {
 };
 
 export const getMessagesOfChatRoom = async (chatRoomId, page = 0, limit = 50) => {
-  const header = await createHeader();
+  const header = createHeader();
 
   try {
     const res = await axios.get(`${baseURL}/message/${chatRoomId}?page=${page}&limit=${limit}`, header);
+    return res.data || [];
     return res.data || [];
   } catch (e) {
     console.error("ChatService - Get Messages Error:", e.response?.data || e.message);
@@ -124,7 +130,7 @@ export const getMessagesOfChatRoom = async (chatRoomId, page = 0, limit = 50) =>
 };
 
 export const sendMessage = async (messageBody) => {
-  const header = await createHeader();
+  const header = createHeader();
 
   try {
     const res = await axios.post(`${baseURL}/message`, messageBody, header);
@@ -136,7 +142,7 @@ export const sendMessage = async (messageBody) => {
 };
 
 export const toggleReaction = async (messageId, reactionData) => {
-  const header = await createHeader();
+  const header = createHeader();
 
   try {
     const res = await axios.post(
@@ -151,32 +157,8 @@ export const toggleReaction = async (messageId, reactionData) => {
   }
 };
 
-export const uploadFile = async (file, onUploadProgress) => {
-  const token = await getUserToken();
-  const formData = new FormData();
-  formData.append("file", file);
-
-  try {
-    const res = await axios.post(`${baseURL}/upload`, formData, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-      onUploadProgress: (progressEvent) => {
-        const percentCompleted = Math.round(
-          (progressEvent.loaded * 100) / progressEvent.total
-        );
-        onUploadProgress(percentCompleted);
-      },
-    });
-    return res.data;
-  } catch (e) {
-    console.error("Upload Service Error:", e);
-    throw e;
-  }
-};
-
 export const editMessage = async (messageId, text) => {
-  const header = await createHeader();
+  const header = createHeader();
   try {
     const res = await axios.put(`${baseURL}/message/${messageId}`, { text }, header);
     return res.data;
@@ -186,10 +168,10 @@ export const editMessage = async (messageId, text) => {
   }
 };
 
-export const deleteMessage = async (messageId) => {
-  const header = await createHeader();
+export const deleteMessage = async (messageId, userId) => {
+  const header = createHeader();
   try {
-    const res = await axios.delete(`${baseURL}/message/${messageId}`, header);
+    const res = await axios.delete(`${baseURL}/message/${messageId}?userId=${userId}`, header);
     return res.data;
   } catch (e) {
     console.error("Delete Service Error:", e);
@@ -198,7 +180,7 @@ export const deleteMessage = async (messageId) => {
 };
 
 export const markMessageSeen = async (messageId, userId) => {
-  const header = await createHeader();
+  const header = createHeader();
   try {
     const res = await axios.patch(`${baseURL}/message/${messageId}/seen`, { userId }, header);
     return res.data;
@@ -209,7 +191,7 @@ export const markMessageSeen = async (messageId, userId) => {
 };
 
 export const deleteChatRoom = async (chatRoomId) => {
-  const header = await createHeader();
+  const header = createHeader();
   try {
     const res = await axios.delete(`${baseURL}/room/${chatRoomId}`, header);
     return res.data;
@@ -217,4 +199,43 @@ export const deleteChatRoom = async (chatRoomId) => {
     console.error("Delete Chat Room Error:", e);
     throw e;
   }
+};
+
+export const hideChatRoom = async (chatRoomId, userId) => {
+  const header = createHeader();
+  try {
+    const res = await axios.patch(`${baseURL}/room/${chatRoomId}/hide?userId=${userId}`, {}, header);
+    return res.data;
+  } catch (e) {
+    console.error("Hide Chat Room Error:", e);
+    throw e;
+  }
+};
+
+export const uploadFile = async (file, onProgress) => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    
+    reader.onprogress = (event) => {
+      if (event.lengthComputable) {
+        const progress = Math.round((event.loaded / event.total) * 100);
+        onProgress(progress);
+      }
+    };
+
+    reader.onload = () => {
+      onProgress(100);
+      resolve({
+        url: reader.result,
+        fileType: file.type,
+        fileSize: file.size
+      });
+    };
+
+    reader.onerror = (err) => {
+      reject(new Error("Failed to read file"));
+    };
+
+    reader.readAsDataURL(file);
+  });
 };

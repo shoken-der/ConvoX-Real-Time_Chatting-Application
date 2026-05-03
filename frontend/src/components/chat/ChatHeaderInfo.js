@@ -1,57 +1,51 @@
 import { useMemo } from "react";
 import useChat from "../../hooks/useChat";
-import { format } from "timeago.js";
+import { ChevronLeft } from "lucide-react";
+import { getPresenceText } from "../../utils/presence";
 
-export default function ChatHeaderInfo({ chatRoom, onlineUsersId, currentUser }) {
-  const { users } = useChat();
+export default function ChatHeaderInfo({ chatRoom, currentUser, onlineUsersId }) {
+  const { users, setCurrentChat } = useChat();
 
   const contact = useMemo(() => {
-    const contactId = chatRoom?.members?.find((m) => m !== currentUser?.uid);
-    if (!contactId) return {};
-    
-    // Direct lookup from pre-loaded global users list
-    return users.find(u => u.uid === contactId) || { uid: contactId, displayName: "Member" };
-  }, [chatRoom, currentUser?.uid, users]);
+    const member = chatRoom?.members?.find((m) => m.id !== currentUser?.id);
+    if (!member) return { displayName: "User" };
+    return users.find((u) => u.id === (member.id || member)) || member;
+  }, [chatRoom, currentUser?.id, users]);
 
-  const isOnline = onlineUsersId?.includes(contact.uid);
-  const lastMessage = chatRoom?.lastMessage;
+  const isOnline = onlineUsersId?.includes(contact.id);
 
   return (
-    <div className="flex items-center gap-3">
-      <div className="relative flex-shrink-0">
-        <img
-          className="h-10 w-10 rounded-xl object-cover ring-2 ring-white/10 dark:ring-neutral-900/50 shadow-premium-sm"
-          src={contact.photoURL || `https://ui-avatars.com/api/?name=${contact.displayName}&background=random`}
-          alt={contact.displayName}
-          onError={(e) => {
-            e.target.src = "https://www.gravatar.com/avatar/00000000000000000000000000000000?d=mp&f=y";
-          }}
-        />
-        {isOnline && (
-          <span className="absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full border-[2px] border-white dark:border-neutral-900 bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)] animate-pulse" />
-        )}
-      </div>
-      <div className="flex-1 min-w-0">
-        <h4 className="text-base font-normal text-[#111b21] dark:text-[#e9edef] truncate tracking-tight mb-0.5">
-          {contact.displayName}
-        </h4>
-        <div className="flex items-center gap-1.5">
-          {isOnline ? (
-            <span className="text-[13px] text-[#667781] dark:text-[#8696a0] tracking-wide animate-in fade-in slide-in-from-bottom-1 duration-500">
-              online
-            </span>
-          ) : (
-             <span className="text-[13px] text-[#667781] dark:text-[#8696a0] tracking-tight">offline</span>
+    <div className="flex items-center justify-between w-full px-4 lg:px-6 py-2.5 bg-[#111827] border-b border-[#2A3245] relative z-50 shrink-0 min-h-[59px]">
+      <div className="flex items-center gap-3">
+        {/* Back button — mobile */}
+        <button
+          onClick={() => setCurrentChat(null)}
+          className="md:hidden p-1.5 -ml-1 text-[#6B7280] hover:text-[#F9FAFB] transition-colors"
+        >
+          <ChevronLeft size={22} />
+        </button>
+
+        <div className="relative flex-shrink-0">
+          <div className="w-10 h-10 rounded-xl overflow-hidden ring-2 ring-[#2A3245] ring-offset-2 ring-offset-[#111827]">
+            <img
+              className="w-full h-full object-cover"
+              src={contact.photoUrl || `https://ui-avatars.com/api/?name=${contact.displayName || 'U'}&background=635BFF&color=fff`}
+              alt={contact.displayName}
+            />
+          </div>
+          {isOnline && (
+            <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-[#0B0C10] bg-[#10B981]" />
           )}
         </div>
-      </div>
 
-      <div className="flex flex-col items-end flex-shrink-0 pr-2">
-         {!isOnline && lastMessage?.createdAt && (
-           <span className="text-[10px] font-bold text-slate-400 dark:text-neutral-500 whitespace-nowrap opacity-80 uppercase tracking-widest tabular-nums animate-in fade-in slide-in-from-right-2 duration-700">
-             {format(lastMessage.createdAt).toUpperCase()}
-           </span>
-         )}
+        <div className="flex flex-col min-w-0">
+          <h4 className="text-[16px] font-semibold text-[#F9FAFB] truncate leading-tight">
+            {contact.displayName}
+          </h4>
+          <span className={`text-[12px] font-medium ${isOnline ? "text-[#10B981]" : "text-[#6B7280]"}`}>
+            {getPresenceText(contact, isOnline)}
+          </span>
+        </div>
       </div>
     </div>
   );

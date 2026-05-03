@@ -5,33 +5,30 @@ import { ChatProvider } from "./contexts/ChatContext";
 import { ToastProvider } from "./contexts/ToastContext";
 import Register from "./components/accounts/Register";
 import Login from "./components/accounts/Login";
-import Profile from "./components/accounts/Profile";
+import EmailVerification from "./components/accounts/EmailVerification";
+
 import WithPrivateRoute from "./utils/WithPrivateRoute";
 import ChatLayout from "./components/layouts/ChatLayout";
 
-import { useEffect } from "react";
+import ProfileSetup from "./components/accounts/ProfileSetup";
 
 function App() {
-  useEffect(() => {
-    document.documentElement.classList.add("dark");
-    localStorage.setItem("color-theme", "dark");
-  }, []);
-
   return (
     <AuthProvider>
       <ChatProvider>
         <ToastProvider>
-          <div className="min-h-screen bg-slate-50 dark:bg-neutral-950">
+          <div className="min-h-screen bg-background text-white">
             <Router>
               <Routes>
                 <Route exact path="/register" element={<Register />} />
                 <Route exact path="/login" element={<Login />} />
+                <Route exact path="/verify-email" element={<EmailVerification />} />
                 <Route
                   exact
-                  path="/profile"
+                  path="/profile-setup"
                   element={
-                    <WithPrivateRoute>
-                      <Profile />
+                    <WithPrivateRoute skipProfileCheck={true}>
+                      <ProfileSetup />
                     </WithPrivateRoute>
                   }
                 />
@@ -54,4 +51,3 @@ function App() {
 }
 
 export default App;
-

@@ -1,110 +1,92 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { getMessagesOfChatRoom } from "../services/ChatService";
+import { useChatContext } from "../contexts/ChatContext";
 
-export default function useMessages(currentChatId, socket, currentUserUid, connected) {
-  const [messages, setMessages] = useState([]);
-  const [loading, setLoading] = useState(true);
+export default function useMessages(currentChatId, socket, currentUserId, connected) {
+  const { messages, setMessages } = useChatContext();
+  const [loading, setLoading] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [page, setPage] = useState(0);
   const [isTyping, setIsTyping] = useState(false);
+  const [typingUser, setTypingUser] = useState(null);
+  const typingTimerRef = useRef(null);
   const LIMIT = 50;
 
-  const fetchMessages = useCallback(async (pageNum = 0) => {
-    if (!currentChatId) return;
-    if (pageNum === 0) setLoading(true);
-    
+  // Typing indicator logic still belongs here as it's room-specific and transient
+  useEffect(() => {
+    if (!connected || !socket?.current?.connected || !currentChatId) return;
+    const client = socket.current;
+
     try {
-      const res = await getMessagesOfChatRoom(currentChatId, pageNum, LIMIT);
-      if (res.length < LIMIT) setHasMore(false);
-      
-      setMessages(prev => pageNum === 0 ? res : [...res, ...prev]);
-      setPage(pageNum);
+      const typingSub = client.subscribe(`/topic/chat/${currentChatId}/typing`, (frame) => {
+        const data = JSON.parse(frame.body);
+        if (String(data.senderId) === String(currentUserId)) return;
+
+        if (data.typing !== false) {
+          setIsTyping(true);
+          setTypingUser({ name: data.senderName || "Someone", photo: data.senderPhoto });
+          if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+          typingTimerRef.current = setTimeout(() => {
+            setIsTyping(true); // Keep user data
+            setIsTyping(false);
+          }, 4000);
+        } else {
+          setIsTyping(false);
+        }
+      });
+      return () => {
+        try { typingSub.unsubscribe(); } catch (e) {}
+      };
     } catch (err) {
-    } finally {
-      if (pageNum === 0) setLoading(false);
+      console.error("Typing subscribe error:", err);
     }
-  }, [currentChatId]);
+  }, [connected, currentChatId, currentUserId, socket]);
 
-  useEffect(() => {
-    setMessages([]);
-    setHasMore(true);
-    setPage(0);
-    fetchMessages(0);
-  }, [currentChatId, fetchMessages]);
-
-  // Real-time listeners
-  useEffect(() => {
-    if (!socket?.current || !currentChatId) return;
-    const s = socket.current;
-
-    const handleNewMessage = (data) => {
-      if (data.chatRoomId === currentChatId) {
-        setMessages(prev => [...prev, data]);
+  const loadMore = async () => {
+    if (!loading && hasMore && currentChatId) {
+      const nextPage = page + 1;
+      setLoading(true);
+      try {
+        const res = await getMessagesOfChatRoom(currentChatId, nextPage, LIMIT);
+        if (res.length < LIMIT) setHasMore(false);
+        const chronMessages = [...res].reverse();
+        setMessages(prev => [...chronMessages, ...prev]);
+        setPage(nextPage);
+      } catch (err) {
+        console.error("Load More Error:", err);
+      } finally {
+        setLoading(false);
       }
-    };
-
-    const handleReaction = (data) => {
-      setMessages(prev => prev.map(m => 
-        m._id === data.messageId ? { ...m, reactions: data.reactions } : m
-      ));
-    };
-
-    const handleEdit = (data) => {
-      setMessages(prev => prev.map(m => 
-        m._id === data.messageId ? { ...m, message: data.message, isEdited: true, ...data.updatedMessage } : m
-      ));
-    };
-
-    const handleDelete = (data) => {
-      setMessages(prev => prev.map(m => 
-        m._id === data.messageId ? { ...m, isDeleted: true, message: "This message was deleted", fileUrl: null } : m
-      ));
-    };
-
-    const handleSeen = (data) => {
-      setMessages(prev => prev.map(m => 
-        m._id === data.messageId ? { ...m, seenBy: [...new Set([...(m.seenBy || []), data.userId])] } : m
-      ));
-    };
-
-    const handleTyping = (data) => {
-      if (data.senderId !== currentUserUid) setIsTyping(true);
-    };
-
-    const handleStopTyping = () => setIsTyping(false);
-
-    s.on("getMessage", handleNewMessage);
-    s.on("getReaction", handleReaction);
-    s.on("messageEdited", handleEdit);
-    s.on("messageDeleted", handleDelete);
-    s.on("messageSeen", handleSeen);
-    s.on("typing", handleTyping);
-    s.on("stopTyping", handleStopTyping);
-
-    return () => {
-      s.off("getMessage", handleNewMessage);
-      s.off("getReaction", handleReaction);
-      s.off("messageEdited", handleEdit);
-      s.off("messageDeleted", handleDelete);
-      s.off("messageSeen", handleSeen);
-      s.off("typing", handleTyping);
-      s.off("stopTyping", handleStopTyping);
-    };
-  }, [socket, currentChatId, currentUserUid, connected]);
-
-  const loadMore = () => {
-    if (!loading && hasMore) {
-      fetchMessages(page + 1);
     }
   };
 
   const updateLocalMessage = useCallback((updatedMsg) => {
-    setMessages(prev => prev.map(m => m._id === updatedMsg._id ? updatedMsg : m));
-  }, []);
+    setMessages(prev => prev.map(m => {
+      if (m.id === updatedMsg.id) {
+        // IMAGE GUARD: Don't let null fields from status updates wipe out our image/file data
+        return {
+          ...m,
+          ...updatedMsg,
+          imageUrl: updatedMsg.imageUrl || m.imageUrl,
+          fileType: updatedMsg.fileType || m.fileType,
+          fileSize: updatedMsg.fileSize || m.fileSize,
+          isUploading: updatedMsg.imageUrl ? false : m.isUploading // If we got a real URL, stop loading
+        };
+      }
+      return m;
+    }));
+  }, [setMessages]);
 
   const addLocalMessage = useCallback((newMsg) => {
-    setMessages(prev => [...prev, newMsg]);
-  }, []);
+    setMessages(prev => {
+       if (prev.some(m => m.id === newMsg.id || (newMsg.tempId && m.tempId === newMsg.tempId))) return prev;
+       return [...prev, newMsg];
+    });
+  }, [setMessages]);
+
+  const resolveOptimisticMessage = useCallback((tempId, realMsg) => {
+    setMessages(prev => prev.map(m => m.tempId === tempId ? realMsg : m));
+  }, [setMessages]);
 
   return {
     messages,
@@ -112,7 +94,9 @@ export default function useMessages(currentChatId, socket, currentUserUid, conne
     hasMore,
     loadMore,
     isTyping,
+    typingUser,
     updateLocalMessage,
-    addLocalMessage
+    addLocalMessage,
+    resolveOptimisticMessage
   };
 }

@@ -2,20 +2,22 @@ import { useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../../contexts/AuthContext";
 import ErrorMessage from "../layouts/ErrorMessage";
-import Button from "../ui/Button";
-import Input from "../ui/Input";
-import Card from "../ui/Card";
+import { MessageSquare, Mail, Lock, Eye, EyeOff } from "lucide-react";
+import ForgotPasswordModal from "./ForgotPasswordModal";
 
 export default function Login() {
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [isForgotModalOpen, setIsForgotModalOpen] = useState(false);
   const { currentUser, login, setError } = useAuth();
 
   useEffect(() => {
     if (currentUser) {
-      navigate("/");
+      if (currentUser.profileCompleted) navigate("/");
+      else navigate("/profile-setup");
     }
   }, [currentUser, navigate]);
 
@@ -25,81 +27,101 @@ export default function Login() {
       setError("");
       setLoading(true);
       await login(email, password);
-      navigate("/");
+      // AuthContext updates currentUser, useEffect handles redirect
     } catch (e) {
-      console.error("Login error:", e);
       setError(e.message || "Failed to login. Please check your credentials.");
     }
     setLoading(false);
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 bg-slate-50 dark:bg-neutral-950 transition-colors duration-300">
+    <div className="h-screen flex items-center justify-center p-4 bg-[#0F1321] relative overflow-hidden">
+      {/* Figma Spec Gradient Overlay */}
+      <div 
+        className="absolute inset-0 pointer-events-none z-0"
+        style={{
+          background: 'radial-gradient(60% 60% at 0% 0%, rgba(99, 91, 255, 0.08) 0%, rgba(15, 19, 33, 0) 100%)',
+        }}
+      />
+      
       <ErrorMessage />
-      <div className="max-w-md w-full relative">
-        {/* Background blobs for depth */}
-        <div className="absolute -top-24 -left-20 w-64 h-64 bg-primary-500/10 rounded-full blur-3xl" />
-        <div className="absolute -bottom-24 -right-20 w-64 h-64 bg-secondary-500/10 rounded-full blur-3xl" />
+      
+      {/* Decorative Blobs */}
+      <div className="fixed top-[-10%] right-[-10%] w-[500px] h-[500px] bg-primary/10 rounded-full blur-[120px] pointer-events-none animate-pulse-glow"></div>
+      <div className="fixed bottom-[-10%] left-[-10%] w-[500px] h-[500px] bg-secondary/10 rounded-full blur-[120px] pointer-events-none"></div>
 
-        <Card className="relative p-8 md:p-10">
-          <div className="text-center mb-10">
-            <div className="w-16 h-16 bg-gradient-to-tr from-primary-600 to-primary-400 rounded-2xl flex items-center justify-center shadow-lg mx-auto mb-6">
-              <svg className="w-9 h-9 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-              </svg>
-            </div>
-            <h2 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-white mb-2">
-              Welcome back
-            </h2>
-            <p className="text-slate-500 dark:text-neutral-400">
-              Please enter your details to sign in
-            </p>
+      <div className="max-w-[420px] w-full bg-[#111827]/80 backdrop-blur-xl rounded-[32px] shadow-premium-lg p-8 md:p-10 relative z-10 border border-white/5 animate-fade-in overflow-hidden">
+        <div className="text-center mb-6">
+          <div className="w-14 h-14 bg-gradient-to-br from-[#635BFF] to-[#7C3AED] rounded-[18px] flex items-center justify-center shadow-2xl shadow-primary/40 mx-auto mb-5 animate-bounce-slow">
+            <MessageSquare className="text-white" size={28} />
           </div>
+          <h2 className="text-3xl font-black text-white mb-2 tracking-tighter">Welcome Back</h2>
+          <p className="text-text-secondary text-[14px] font-medium">Log in to your account</p>
+        </div>
 
-          <form className="space-y-5" onSubmit={handleFormSubmit}>
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-slate-400 dark:text-neutral-500 uppercase tracking-widest pl-1">
-                Email Address
-              </label>
-              <Input
-                id="email-address"
-                name="email"
+        <form className="space-y-[18px]" onSubmit={handleFormSubmit}>
+          <div className="space-y-2">
+            <label className="text-[11px] font-bold text-text-muted uppercase tracking-[0.15em] px-1">Email Address</label>
+            <div className="relative group">
+              <Mail className="absolute left-5 top-1/2 -translate-y-1/2 text-text-muted group-focus-within:text-primary transition-colors" size={18} />
+              <input
                 type="email"
                 required
-                placeholder="xyz@gmail.com"
+                className="w-full pl-14 pr-6 py-[16px] rounded-[18px] bg-[#1F2937]/50 border border-white/5 focus:border-primary/50 focus:bg-[#1F2937] text-white focus:ring-0 text-[14px] font-medium transition-all outline-none placeholder:text-text-muted/50"
+                placeholder="name@example.com"
                 onChange={(e) => setEmail(e.target.value)}
               />
             </div>
+          </div>
 
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-slate-400 dark:text-neutral-500 uppercase tracking-widest pl-1 flex justify-between">
-                Password
-              </label>
-              <Input
-                id="password"
-                name="password"
-                type="password"
+          <div className="space-y-2">
+            <div className="flex justify-between px-1">
+              <label className="text-[11px] font-bold text-text-muted uppercase tracking-[0.15em]">Password</label>
+              <button 
+                type="button"
+                onClick={() => setIsForgotModalOpen(true)}
+                className="text-[11px] font-bold text-primary hover:text-primary/80 transition-colors uppercase tracking-wider"
+              >
+                Forgot?
+              </button>
+            </div>
+            <div className="relative group">
+              <Lock className="absolute left-5 top-1/2 -translate-y-1/2 text-text-muted group-focus-within:text-primary transition-colors" size={18} />
+              <input
+                type={showPassword ? "text" : "password"}
                 required
+                className="w-full pl-14 pr-14 py-[16px] rounded-[18px] bg-[#1F2937]/50 border border-white/5 focus:border-primary/50 focus:bg-[#1F2937] text-white focus:ring-0 text-[14px] font-medium transition-all outline-none placeholder:text-text-muted/50"
                 placeholder="••••••••"
                 onChange={(e) => setPassword(e.target.value)}
               />
-            </div>
-
-            <Button type="submit" disabled={loading} size="lg" variant="primary" className="w-full">
-              {loading ? "Signing in..." : "Sign in"}
-            </Button>
-
-            <div className="text-center pt-2">
-              <Link
-                to="/register"
-                className="text-sm font-medium text-slate-500 hover:text-primary-600 dark:text-neutral-400 dark:hover:text-primary-400 transition-colors"
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-5 top-1/2 -translate-y-1/2 text-text-muted hover:text-primary transition-colors"
               >
-                Don't have an account? <span className="font-bold text-primary-600 dark:text-primary-400">Join now</span>
-              </Link>
+                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
             </div>
-          </form>
-        </Card>
+          </div>
+
+          <button 
+            type="submit" 
+            disabled={loading}
+            className="w-full py-[18px] bg-gradient-to-r from-[#635BFF] to-[#7C3AED] text-white rounded-[18px] font-black text-[15px] hover:scale-[1.02] active:scale-[0.98] transition-all shadow-2xl shadow-primary/30 mt-4 disabled:opacity-50 disabled:scale-100 uppercase tracking-wider"
+          >
+            {loading ? "Signing in..." : "Sign In"}
+          </button>
+
+          <p className="text-center text-[14px] text-text-muted pt-6 font-medium">
+            Don't have an account? <Link to="/register" className="font-bold text-primary hover:text-primary/80 transition-colors ml-1 underline underline-offset-4 decoration-primary/20">Join now</Link>
+          </p>
+        </form>
       </div>
+
+      <ForgotPasswordModal 
+        isOpen={isForgotModalOpen} 
+        onClose={() => setIsForgotModalOpen(false)} 
+      />
     </div>
   );
 }

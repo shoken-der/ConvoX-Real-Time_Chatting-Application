@@ -1,25 +1,22 @@
 import { useState, useEffect, useRef } from "react";
-import { sendMessage, markMessageSeen, createChatRoom, getChatRoomOfUsers } from "../../services/ChatService";
+import { sendMessage, markMessageSeen, uploadFile } from "../../services/ChatService";
+import { useAuth } from "../../contexts/AuthContext";
+import useChat from "../../hooks/useChat";
 import useMessages from "../../hooks/useMessages";
 import Message from "./Message";
-import Contact from "./Contact";
 import ChatHeaderInfo from "./ChatHeaderInfo";
 import ChatForm from "./ChatForm";
-import { ChevronLeftIcon, ChevronRightIcon, DocumentDownloadIcon } from "@heroicons/react/outline";
-import format from "date-fns/format";
-import isToday from "date-fns/isToday";
-import isYesterday from "date-fns/isYesterday";
+import { MessageSquare, AlertCircle } from "lucide-react";
+import { format, isToday, isYesterday } from "date-fns";
 
-// ---- Skeleton Loader ----
 function MessageSkeleton({ self }) {
   return (
-    <div className={`flex flex-col ${self ? "items-end" : "items-start"} mb-4 px-4`}>
-      <div className={`h-12 rounded-[22px] shimmer ${self ? "w-48 bg-primary-500/10 rounded-br-[4px]" : "w-56 bg-slate-200/50 dark:bg-neutral-800/50 rounded-bl-[4px]"}`} />
+    <div className={`flex flex-col ${self ? "items-end" : "items-start"} mb-5 px-4 animate-pulse`}>
+      <div className={`h-11 rounded-[20px] ${self ? "w-44 bg-primary/10 rounded-br-none" : "w-52 bg-surface-elevated rounded-bl-none"}`} />
     </div>
   );
 }
 
-// ---- Date Separator ----
 function DateSeparator({ date }) {
   const getLabel = () => {
     const d = new Date(date);
@@ -27,139 +24,217 @@ function DateSeparator({ date }) {
     if (isYesterday(d)) return "Yesterday";
     return format(d, "MMMM d, yyyy");
   };
-
   return (
-    <div className="flex justify-center my-3 mx-auto z-10 relative">
-      <span className="bg-white dark:bg-[#182229] px-3 py-1.5 rounded-lg text-[11.5px] font-medium text-[#54656f] dark:text-[#8696a0] shadow-[0_1px_0.5px_rgba(11,20,26,0.13)] uppercase tracking-wide">
+    <div className="flex justify-center my-6">
+      <span className="text-[11px] font-medium text-[#F9FAFB] px-4 py-1.5 rounded-[12px] bg-[#171923]">
         {getLabel()}
       </span>
     </div>
   );
 }
 
-// ---- Connection Banner ----
 function ConnectionBanner({ connected }) {
   if (connected) return null;
   return (
-    <div className="flex items-center justify-center gap-2 px-4 py-2 bg-amber-500/10 border-b border-amber-500/20 text-amber-600 dark:text-amber-400 text-[11px] font-bold tracking-tight z-[100]">
-      <span className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-pulse" />
-      Connecting...
+    <div className="flex items-center justify-center gap-2 px-4 py-2 bg-warning/10 border-b border-warning/20 text-warning text-[11px] font-bold">
+      <AlertCircle size={13} className="animate-pulse" />
+      Reconnecting...
     </div>
   );
 }
 
-export default function ChatRoom({ currentChat, currentUser, onResolveChat, onUpsertChatRoom, socket, onToggleSidebar, isSidebarOpen, onlineUsersId, connected }) {
+export default function ChatRoom() {
+  const { currentUser } = useAuth();
+  const { currentChat, socket, connected, onlineUsersId, setSelectedImage, emit } = useChat();
+
   const {
     messages,
     loading,
     hasMore,
     loadMore,
     isTyping,
+    typingUser,
     updateLocalMessage,
-    addLocalMessage
-  } = useMessages(currentChat._id, socket, currentUser.uid, connected);
+    addLocalMessage,
+    resolveOptimisticMessage
+  } = useMessages(currentChat?.id, socket, currentUser?.id, connected);
+
+  // Buffer typing user to avoid glitch during 700ms fade-out
+  const [displayTypingUser, setDisplayTypingUser] = useState(null);
+  useEffect(() => {
+    if (typingUser) {
+      setDisplayTypingUser(typingUser);
+    } else if (!isTyping) {
+      // Keep the user info for a moment so the 700ms animation can finish
+      const timer = setTimeout(() => setDisplayTypingUser(null), 800);
+      return () => clearTimeout(timer);
+    }
+  }, [typingUser, isTyping]);
 
   const [replyMessage, setReplyMessage] = useState(null);
-  const [lightboxUrl, setLightboxUrl] = useState(null);
   const scrollRef = useRef();
   const observer = useRef();
   const loadMoreObserver = useRef();
 
-  const ensurePersistentRoom = async () => {
-    if (!currentChat?.isTemporary) return currentChat;
-    const receiverId = currentChat.members.find((m) => m !== currentUser.uid);
-    if (!receiverId) return currentChat;
-
-    try {
-      const created = await createChatRoom({ senderId: currentUser.uid, receiverId });
-      if (created?._id) {
-        onUpsertChatRoom?.(created);
-        onResolveChat?.(created);
-        return created;
-      }
-    } catch (createErr) {
-      try {
-        const existing = await getChatRoomOfUsers(currentUser.uid, receiverId);
-        const room = Array.isArray(existing) ? existing[0] : null;
-        if (room?._id) {
-          onUpsertChatRoom?.(room);
-          onResolveChat?.(room);
-          return room;
-        }
-      } catch (lookupErr) {
-        console.error("Failed to resolve temporary room:", lookupErr);
-      }
-      console.error("Failed to create persistent room:", createErr);
-    }
-
-    return currentChat;
-  };
-
-  // Mark messages as seen
+  // Mark last message as seen
   const lastMessageRef = (node) => {
     if (observer.current) observer.current.disconnect();
     observer.current = new IntersectionObserver(async (entries) => {
       if (entries[0].isIntersecting) {
         const lastMsg = messages[messages.length - 1];
-        if (lastMsg && lastMsg.sender !== currentUser.uid && !lastMsg.seenBy?.includes(currentUser.uid)) {
-          const receiverId = currentChat.members.find((m) => m !== currentUser.uid);
-          await markMessageSeen(lastMsg._id, currentUser.uid);
-          socket.current.emit("markSeen", {
-            messageId: lastMsg._id,
-            userId: currentUser.uid,
-            receiverId,
-          });
+        if (
+          lastMsg &&
+          lastMsg.sender !== currentUser.id &&
+          !lastMsg.seenBy?.some((u) => u.id === currentUser.id)
+        ) {
+          try {
+            const updatedMsg = await markMessageSeen(lastMsg.id, currentUser.id);
+            updateLocalMessage(updatedMsg);
+          } catch (err) {
+            // silently fail
+          }
         }
       }
     });
     if (node) observer.current.observe(node);
   };
 
-  // Infinite Scroll Observer (Top)
+  // Infinite scroll top
   const topRef = (node) => {
     if (loadMoreObserver.current) loadMoreObserver.current.disconnect();
     loadMoreObserver.current = new IntersectionObserver((entries) => {
-      if (entries[0].isIntersecting && hasMore && !loading) {
-        loadMore();
-      }
+      if (entries[0].isIntersecting && hasMore && !loading) loadMore();
     });
     if (node) loadMoreObserver.current.observe(node);
   };
 
+  const prevMessagesLength = useRef(messages.length);
+  const prevIsTyping = useRef(isTyping);
+
   useEffect(() => {
-    if (messages.length > 0 && !loading) {
-       // Only scroll to bottom on initial load or new message
-       // If we just loaded more historical messages, we shouldn't jump to the bottom
-       if (scrollRef.current) {
-          scrollRef.current.scrollIntoView({ behavior: "smooth" });
-       }
+    const hasNewMessage = messages.length > prevMessagesLength.current;
+    const typingStarted = isTyping && !prevIsTyping.current;
+
+    if ((hasNewMessage || typingStarted) && !loading && scrollRef.current) {
+      // Only scroll to bottom if it's a new message or someone started typing
+      scrollRef.current.scrollIntoView({ behavior: 'smooth' });
     }
+    
+    prevMessagesLength.current = messages.length;
+    prevIsTyping.current = isTyping;
   }, [messages.length, isTyping, loading]);
 
-  const handleFormSubmit = async (message, fileData = null) => {
-    const resolvedChat = await ensurePersistentRoom();
-    const receiverId = resolvedChat.members.find((m) => m !== currentUser.uid);
-    const messageBody = {
-      chatRoomId: resolvedChat._id,
-      sender: currentUser.uid,
-      message,
-      replyTo: replyMessage?._id || null,
-      ...fileData,
-    };
-    try {
-      const res = await sendMessage(messageBody);
-      socket.current?.emit("sendMessage", { ...res, receiverId });
-      addLocalMessage(res);
-      setReplyMessage(null);
-    } catch (err) {
-      console.error("Failed to send message:", err);
+  // Debugging logs
+  useEffect(() => {
+    if (currentChat) {
+
     }
+  }, [currentChat]);
+
+  useEffect(() => {
+    if (messages) {
+
+    }
+  }, [messages]);
+
+  const handleFormSubmit = async (message, fileOrData = null) => {
+    const receiverId = currentChat.members.find((m) => m.id !== currentUser.id)?.id;
+    const content = (typeof message === "string" ? message : "") || "";
+    const tempId = `temp-${Date.now()}`;
+    
+    const isFile = fileOrData instanceof File;
+    // Local blob URL is ONLY for the sender's own optimistic UI — never sent over WebSocket
+    const localImageUrl = isFile ? URL.createObjectURL(fileOrData) : (fileOrData?.url || null);
+
+    // 1. Create optimistic message for instant UI update (sender only)
+    const optimisticMsg = {
+      id: tempId,
+      tempId: tempId,
+      chatRoomId: currentChat.id,
+      sender: currentUser.id,
+      senderName: currentUser.displayName,
+      content: content,
+      replyTo: replyMessage ? { content: replyMessage.content || replyMessage.message } : null,
+      imageUrl: localImageUrl,
+      fileType: isFile ? fileOrData.type : (fileOrData?.fileType || null),
+      fileSize: isFile ? fileOrData.size : (fileOrData?.fileSize || 0),
+      createdAt: new Date().toISOString(),
+      isOptimistic: true,
+      isUploading: isFile,
+      reactions: [],
+      seenBy: []
+    };
+
+    // 2. Add to UI immediately (Zero Latency for sender)
+    addLocalMessage(optimisticMsg);
+    setReplyMessage(null);
+
+    // 3. PHASE 1: Lightweight placeholder broadcast to receiver
+    //    IMPORTANT: Do NOT send blob URLs or large base64 data over WebSocket.
+    //    Send only the metadata so the receiver can show a "Receiving..." spinner.
+    emit("sendMessage", {
+      id: tempId,
+      tempId: tempId,
+      chatRoomId: currentChat.id,
+      sender: currentUser.id,
+      senderName: currentUser.displayName,
+      content: content,
+      replyTo: replyMessage ? { content: replyMessage.content || replyMessage.message } : null,
+      imageUrl: null,           // No image yet — receiver shows spinner
+      fileType: isFile ? fileOrData.type : (fileOrData?.fileType || null),
+      fileSize: isFile ? fileOrData.size : (fileOrData?.fileSize || 0),
+      createdAt: new Date().toISOString(),
+      isUploading: isFile,      // Tells receiver to show loading indicator
+      isOptimistic: true,
+      reactions: [],
+      seenBy: [],
+      receiverId
+    });
+
+    // 4. Process file & save to database in background
+    (async () => {
+      let finalFileData = isFile ? null : fileOrData;
+
+      if (isFile) {
+        try {
+          const uploadRes = await uploadFile(fileOrData, () => {});
+          finalFileData = { url: uploadRes.url, fileType: uploadRes.fileType, fileSize: uploadRes.fileSize };
+        } catch (err) {
+          console.error("Upload failed:", err);
+          return;
+        }
+      }
+
+      // 5. Persist to DB — the backend's REST broadcast IS the Phase 2 delivery.
+      //    MessageController broadcasts the saved response (with real id + imageUrl)
+      //    to /topic/chat/{id} AND /topic/user/{receiverId} automatically.
+      //    The receiver's handleIncomingMessage will match on tempId and replace
+      //    the placeholder with the real image. No separate Phase 2 emit needed.
+      const messageBody = {
+        tempId: tempId,
+        receiverId: receiverId,
+        chatRoomId: currentChat.id,
+        senderId: currentUser.id,
+        content: content,
+        replyToId: replyMessage?.id || null,
+        imageUrl: finalFileData?.url || null,
+        fileType: finalFileData?.fileType || null,
+        fileSize: finalFileData?.fileSize || null,
+      };
+
+      try {
+        const res = await sendMessage(messageBody);
+        // Update sender's own optimistic message with the real persisted data
+        resolveOptimisticMessage(tempId, { ...res, imageUrl: res.imageUrl || localImageUrl });
+      } catch (err) {
+        console.error("Failed to persist message:", err);
+      }
+    })();
   };
 
   const renderMessages = () => {
     const items = [];
     let lastDate = null;
-
     messages.forEach((m, index) => {
       const msgDate = m.createdAt ? new Date(m.createdAt).toDateString() : null;
       if (msgDate && msgDate !== lastDate) {
@@ -167,15 +242,16 @@ export default function ChatRoom({ currentChat, currentUser, onResolveChat, onUp
         lastDate = msgDate;
       }
       items.push(
-        <div key={m._id || index} ref={index === messages.length - 1 ? lastMessageRef : null} className="px-4">
+        <div key={m.id || index} ref={index === messages.length - 1 ? lastMessageRef : null} className="px-6 lg:px-12">
           <Message
             message={m}
-            self={currentUser.uid}
+            self={currentUser.id}
+            senderUser={currentChat.members.find(mem => mem.id === m.sender)}
             onReply={() => setReplyMessage(m)}
             socket={socket}
-            receiverId={currentChat.members.find((mem) => mem !== currentUser.uid)}
+            receiverId={currentChat.members.find((mem) => mem.id !== currentUser.id)?.id}
             onMessageUpdated={updateLocalMessage}
-            onImageClick={setLightboxUrl}
+            onImageClick={(url) => setSelectedImage(url)}
           />
         </div>
       );
@@ -183,122 +259,95 @@ export default function ChatRoom({ currentChat, currentUser, onResolveChat, onUp
     return items;
   };
 
+  if (!currentChat) return null;
+
   return (
-    <div className="flex flex-col h-full bg-[#efeae2] dark:bg-neutral-900 relative overflow-hidden animate-subtle-in">
-      <ConnectionBanner connected={connected} />
+    <div className="flex flex-col h-full w-full bg-[#0F1321] relative overflow-hidden">
+      {/* Figma Spec Gradient Overlay */}
+      <div 
+        className="absolute inset-0 pointer-events-none z-0"
+        style={{
+          background: 'radial-gradient(60% 60% at 0% 0%, rgba(99, 91, 255, 0.08) 0%, rgba(15, 19, 33, 0) 100%)',
+        }}
+      />
 
-      <div className="flex items-center gap-2 py-2 px-4 md:mx-3 md:mt-3 bg-[#f0f2f5] dark:bg-[#202c33] z-20 sticky top-0 md:top-3 md:rounded-2xl shadow-premium-sm border-b md:border border-slate-200/50 dark:border-neutral-800/50">
-        <button 
-          onClick={onToggleSidebar} 
-          className="p-2 text-primary-500 hover:bg-black/5 dark:hover:bg-white/5 rounded-full transition-colors flex items-center justify-center mr-1"
-          title={isSidebarOpen ? "Collapse Sidebar" : "Back to Chats"}
-        >
-          {isSidebarOpen ? <ChevronLeftIcon className="h-5 w-5" /> : <ChevronLeftIcon className="h-6 w-6 md:h-5 md:w-5" />}
-        </button>
-        <div className="flex-1">
-          <ChatHeaderInfo 
-            chatRoom={currentChat} 
-            currentUser={currentUser} 
-            onlineUsersId={onlineUsersId} 
-          />
+      <div className="flex-1 flex flex-col w-full h-full relative z-10 overflow-hidden">
+        <ConnectionBanner connected={connected} />
+        
+        <div className="w-full shrink-0 relative z-50">
+          <ChatHeaderInfo chatRoom={currentChat} currentUser={currentUser} onlineUsersId={onlineUsersId} />
         </div>
-      </div>
 
-      <div className="flex-1 relative flex flex-col overflow-hidden">
-        <div className="flex-1 overflow-y-auto scroll-smooth relative">
-          <div className="pt-1 pb-1 flex flex-col justify-end min-h-full">
-            {/* Load More Trigger */}
+        <div className="flex-1 overflow-y-auto pt-2 pb-4 custom-scrollbar relative z-0">
+          <div className="flex flex-col justify-end min-h-full px-3 md:px-4 w-full">
             <div ref={topRef} className="h-1 w-full" />
-            
+
             {loading && messages.length === 0 ? (
-              <div className="flex flex-col gap-4">
-                {[...Array(5)].map((_, i) => (<MessageSkeleton key={i} self={i % 2 === 0} />))}
+              <div className="flex flex-col gap-1">
+                {[...Array(5)].map((_, i) => (
+                  <MessageSkeleton key={i} self={i % 2 === 0} />
+                ))}
               </div>
-            ) : messages.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-[60vh] gap-4 opacity-40">
-                <div className="w-20 h-20 bg-white dark:bg-neutral-800 rounded-3xl flex items-center justify-center shadow-xl border border-slate-100 dark:border-neutral-700">
-                  <svg className="w-10 h-10 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M8 12h.01M12 12h.01M16 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
+            ) : !loading && messages.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-[50vh] gap-4 animate-zoom-in">
+                <div className="w-20 h-20 bg-surface rounded-full flex items-center justify-center shadow-premium border border-border/40">
+                  <MessageSquare className="text-primary w-8 h-8 opacity-40" />
                 </div>
-                <p className="text-sm font-bold tracking-tight text-slate-500">No messages yet.</p>
+                <div className="text-center">
+                  <h3 className="text-[18px] font-black text-text-main mb-1">No messages yet</h3>
+                  <p className="text-[14px] font-medium text-text-secondary">Send a message to start the conversation 👋</p>
+                </div>
               </div>
             ) : (
               <>
-                {hasMore && !loading && (
-                  <div className="text-center pb-4">
-                    <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Scroll up to load more</span>
-                  </div>
-                )}
                 {loading && messages.length > 0 && (
-                  <div className="flex justify-center py-2 animate-pulse">
-                    <div className="w-1.5 h-1.5 bg-primary-500 rounded-full mx-0.5" />
-                    <div className="w-1.5 h-1.5 bg-primary-500 rounded-full mx-0.5" />
-                    <div className="w-1.5 h-1.5 bg-primary-500 rounded-full mx-0.5" />
+                  <div className="flex justify-center py-3">
+                    <div className="flex gap-1">
+                      <div className="w-1.5 h-1.5 bg-primary/30 rounded-full animate-pulse" />
+                      <div className="w-1.5 h-1.5 bg-primary/30 rounded-full animate-pulse delay-150" />
+                      <div className="w-1.5 h-1.5 bg-primary/30 rounded-full animate-pulse delay-300" />
+                    </div>
                   </div>
                 )}
-                {renderMessages()}
-              </>
-            )}
-
-            <div className={`px-8 transition-all duration-500 ${isTyping ? "pt-2 opacity-100 scale-100 h-12" : "pt-0 opacity-0 scale-95 h-0 overflow-hidden"}`}>
-              <div className="flex items-center gap-3 px-4 py-2.5 bg-white/50 dark:bg-neutral-800/30 backdrop-blur-md rounded-2xl rounded-bl-none w-max border border-slate-100 dark:border-neutral-700/50 shadow-sm">
-                <div className="flex gap-1.5">
-                  <span className="w-1.5 h-1.5 bg-primary-500 rounded-full animate-bounce [animation-duration:0.6s]" />
-                  <span className="w-1.5 h-1.5 bg-primary-500 rounded-full animate-bounce [animation-duration:0.6s] [animation-delay:0.2s]" />
-                  <span className="w-1.5 h-1.5 bg-primary-500 rounded-full animate-bounce [animation-duration:0.6s] [animation-delay:0.4s]" />
-                </div>
+            {renderMessages()}
+                
+            {/* Typing Indicator — Positioned with clearance */}
+            <div className={`transition-all duration-700 cubic-bezier(0.4, 0, 0.2, 1) overflow-hidden ${isTyping ? "max-h-20 opacity-100 mt-2" : "max-h-0 opacity-0 pointer-events-none"}`}>
+              <div className={`flex items-center gap-2.5 mb-6 ${isTyping ? "animate-slide-up" : ""}`}>
+                 <div className="w-8 h-8 rounded-xl overflow-hidden flex-shrink-0 shadow-sm ring-2 ring-[#2A3245] ring-offset-2 ring-offset-[#0F1321] bg-[#2A3245]">
+                   <img 
+                     src={displayTypingUser?.photo || `https://ui-avatars.com/api/?name=${displayTypingUser?.name || 'User'}&background=635BFF&color=fff`} 
+                     alt="" 
+                     className="w-full h-full object-cover" 
+                   />
+                 </div>
+                 <div className="bg-[#1B1E2B]/80 backdrop-blur-sm text-[#F9FAFB] rounded-[18px] rounded-bl-[4px] px-4 py-2 flex items-center gap-2 border border-[#2A3245]/50 shadow-sm">
+                   <span className="text-[13px] font-medium">{displayTypingUser?.name || 'Someone'} is typing</span>
+                   <div className="flex gap-1">
+                     <span className="w-1.5 h-1.5 bg-[#635BFF] rounded-full animate-bounce [animation-duration:1s]" />
+                     <span className="w-1.5 h-1.5 bg-[#635BFF] rounded-full animate-bounce [animation-duration:1s] [animation-delay:0.2s]" />
+                     <span className="w-1.5 h-1.5 bg-[#635BFF] rounded-full animate-bounce [animation-duration:1s] [animation-delay:0.4s]" />
+                   </div>
+                 </div>
               </div>
             </div>
-          </div>
-          <div ref={scrollRef} className="h-1" />
-        </div>
-        
-        {lightboxUrl && (
-          <div
-            className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-in fade-in duration-200"
-            onClick={() => setLightboxUrl(null)}
-          >
-            <div className="absolute top-4 right-4 flex items-center gap-3">
-              <a
-                href={lightboxUrl}
-                target="_blank"
-                rel="noreferrer"
-                download
-                className="p-2 text-white/70 hover:text-white bg-white/10 rounded-xl transition-colors"
-                onClick={(e) => e.stopPropagation()}
-                title="Download"
-              >
-                <DocumentDownloadIcon className="h-6 w-6" />
-              </a>
-              <button
-                className="p-2 text-white/70 hover:text-white bg-white/10 rounded-xl transition-colors"
-                onClick={() => setLightboxUrl(null)}
-                title="Close"
-              >
-                <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-            
-            <img
-              src={lightboxUrl}
-              alt="Full preview"
-              className="max-h-[90%] max-w-full rounded-2xl shadow-2xl"
-              onClick={(e) => e.stopPropagation()}
-            />
-          </div>
+          </>
         )}
       </div>
+          <div ref={scrollRef} className="h-1" />
+        </div>
 
-      <div className="z-30 relative md:mx-3 md:mb-3 bg-[#f0f2f5] dark:bg-[#202c33] md:rounded-2xl shadow-premium-sm border-t md:border border-slate-200/50 dark:border-neutral-800/50">
-        <ChatForm
-          handleFormSubmit={handleFormSubmit}
-          socket={socket}
-          currentChat={currentChat}
-          currentUser={currentUser}
-          replyMessage={replyMessage}
-          setReplyMessage={setReplyMessage}
-        />
+        {/* Removed redundant typing indicator */}
+
+        <div className="w-full shrink-0 relative z-50 bg-transparent px-3 lg:px-4 py-2.5 min-h-[76px] flex flex-col justify-center">
+          <ChatForm
+            handleFormSubmit={handleFormSubmit}
+            currentChat={currentChat}
+            currentUser={currentUser}
+            replyMessage={replyMessage}
+            setReplyMessage={setReplyMessage}
+          />
+        </div>
       </div>
     </div>
   );

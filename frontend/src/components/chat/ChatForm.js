@@ -1,253 +1,211 @@
-import { useState, useEffect, useRef } from "react";
-import { PaperAirplaneIcon } from "@heroicons/react/solid";
-import { EmojiHappyIcon, PlusIcon, XIcon, DocumentIcon, PhotographIcon } from "@heroicons/react/outline";
+import { useState, useRef, useEffect, useCallback } from "react";
+import { Send, Smile, Plus, X, File } from "lucide-react";
 import Picker from "emoji-picker-react";
 import { useDropzone } from 'react-dropzone';
-import { uploadFile } from "../../services/ChatService";
-import useSocket from "../../hooks/useSocket";
+import useChat from "../../hooks/useChat";
 import { useToast } from "../../contexts/ToastContext";
 
 export default function ChatForm({ handleFormSubmit, currentChat, currentUser, replyMessage, setReplyMessage }) {
   const { addToast } = useToast();
+  const { emit } = useChat();
   const [message, setMessage] = useState("");
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
-  const [isTypingLocal, setIsTypingLocal] = useState(false);
   const [selectedFile, setSelectedFile] = useState(null);
-  const [uploadProgress, setUploadProgress] = useState(0);
-  const [isUploading, setIsUploading] = useState(false);
-  const scrollRef = useRef();
   const typingTimeoutRef = useRef(null);
-  
-  const { emit } = useSocket();
-
-  useEffect(() => {
-    scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [showEmojiPicker, replyMessage, selectedFile, uploadProgress]);
+  const isTypingRef = useRef(false); // Use ref to avoid stale closures
 
   const onDrop = (acceptedFiles) => {
     const file = acceptedFiles?.[0];
     if (!file) return;
     if (file.size > 10 * 1024 * 1024) {
-      addToast({
-        type: "error",
-        title: "File too large",
-        message: "Max upload size is 10MB.",
-      });
+      addToast({ type: "error", title: "File too large", message: "Max upload size is 10MB." });
       return;
     }
     setSelectedFile(file);
   };
 
-  const { getRootProps, getInputProps, isDragActive, open } = useDropzone({ 
+  const { getRootProps, getInputProps, open } = useDropzone({ 
     onDrop, 
     noClick: true,
-    accept: {
-      'image/*': [],
-      'application/pdf': [],
-      'video/*': [],
-      'application/msword': [],
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document': []
-    },
-    onDropRejected: () => {
-      addToast({
-        type: "error",
-        title: "Unsupported file",
-        message: "Please choose an image, PDF, video, or document file.",
-      });
-    },
+    accept: { 'image/*': [], 'application/pdf': [], 'video/*': [] }
   });
 
-  const handleEmojiClick = (arg1, arg2) => {
-    // Robustly extract the emoji string from potential v3 or v4 argument structures
-    const emoji = (arg1 && typeof arg1 === 'object' ? arg1.emoji : null) || 
-                  (arg2 && typeof arg2 === 'object' ? arg2.emoji : null) ||
-                  (typeof arg1 === 'string' ? arg1 : null);
-
-    if (emoji && typeof emoji === 'string') {
-      setMessage(prev => (prev === undefined || prev === null ? "" : prev) + emoji);
-    }
+  const handleEmojiClick = (event, emojiObject) => {
+    setMessage(prev => (prev || "") + (emojiObject?.emoji || ""));
     handleTyping();
   };
 
-  const handleTyping = () => {
-    if (!currentChat) return;
-    const receiverId = currentChat.members.find((m) => m !== currentUser.uid);
-    if (!isTypingLocal) {
-      setIsTypingLocal(true);
-      emit("typing", { senderId: currentUser.uid, receiverId });
+  const sendStopTyping = useCallback(() => {
+    if (!isTypingRef.current || !currentChat || !currentUser) return;
+    const receiverId = currentChat.members.find((m) => m.id !== currentUser.id)?.id;
+    isTypingRef.current = false;
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    emit("stopTyping", {
+      senderId: currentUser.id,
+      senderName: currentUser.displayName || currentUser.username,
+      senderPhoto: currentUser.photoUrl,
+      receiverId,
+      chatRoomId: currentChat.id,
+      typing: false
+    });
+  }, [currentChat, currentUser, emit]);
+
+  const handleTyping = useCallback(() => {
+    if (!currentChat || !currentUser) return;
+    const receiverId = currentChat.members.find((m) => m.id !== currentUser.id)?.id;
+
+    // Send start-typing only once per burst
+    if (!isTypingRef.current) {
+      isTypingRef.current = true;
+      emit("typing", {
+        senderId: currentUser.id,
+        senderName: currentUser.displayName || currentUser.username,
+        senderPhoto: currentUser.photoUrl,
+        receiverId,
+        chatRoomId: currentChat.id,
+        typing: true
+      });
     }
+
+    // Reset the stop-typing timer on every keystroke
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
     typingTimeoutRef.current = setTimeout(() => {
-      emit("stopTyping", { senderId: currentUser.uid, receiverId });
-      setIsTypingLocal(false);
-    }, 2500);
-  };
+      sendStopTyping();
+    }, 800);
+  }, [currentChat, currentUser, emit, sendStopTyping]);
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = (e) => {
     e.preventDefault();
     if (!message.trim() && !selectedFile) return;
 
-    let fileData = null;
-
-    if (selectedFile) {
-      setIsUploading(true);
-      try {
-        const uploadRes = await uploadFile(selectedFile, (progress) => setUploadProgress(progress));
-        fileData = {
-          fileUrl: uploadRes.url,
-          fileType: uploadRes.fileType,
-          fileSize: uploadRes.fileSize
-        };
-      } catch (err) {
-        console.error("Upload failed", err);
-        const errorMessage = err.response?.data?.message || err.message || "Failed to upload file";
-        addToast({ type: "error", title: "Upload Failed", message: errorMessage });
-        setIsUploading(false);
-        setUploadProgress(0);
-        setSelectedFile(null);
-        return;
-      }
-      setIsUploading(false);
-      setUploadProgress(0);
-      setSelectedFile(null);
-    }
+    const currentMsg = message;
+    const currentFile = selectedFile;
     
-    if (typingTimeoutRef.current) {
-      clearTimeout(typingTimeoutRef.current);
-      const receiverId = currentChat.members.find((m) => m !== currentUser.uid);
-      emit("stopTyping", { senderId: currentUser.uid, receiverId });
-      setIsTypingLocal(false);
-    }
-
-    handleFormSubmit(message, fileData);
+    // Clear UI immediately for WhatsApp-like speed
     setMessage("");
     setShowEmojiPicker(false);
+    setSelectedFile(null);
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    sendStopTyping();
+
+    // Call parent handler IMMEDIATELY with the raw file for optimistic UI
+    handleFormSubmit(currentMsg, currentFile);
   };
 
-  return (
-    <div
-      {...getRootProps()}
-      className={`p-2 md:p-3 relative ${isDragActive ? "bg-black/5" : ""} transition-colors`}
-      ref={scrollRef}
-    >
-      <input {...getInputProps()} className="hidden" />
-      
-      {/* Reply Preview */}
-      {replyMessage && (
-        <div className="max-w-4xl mx-auto mb-1.5 flex items-center justify-between p-3 bg-white/85 dark:bg-neutral-900/45 backdrop-blur-xl rounded-2xl border border-slate-200/70 dark:border-neutral-800/70 animate-in slide-in-from-bottom-2 shadow-sm relative overflow-hidden group">
-          <div className="absolute left-0 top-0 bottom-0 w-1 bg-primary-500/90" />
-          <div className="min-w-0 pl-2">
-            <p className="text-[10px] font-bold uppercase tracking-widest mb-0.5 text-primary-500 opacity-80">Replying to</p>
-            <p className="text-sm text-slate-700 dark:text-neutral-200 truncate font-medium leading-tight">{replyMessage.message}</p>
-          </div>
-          <button 
-            onClick={() => setReplyMessage(null)} 
-            className="p-1.5 hover:bg-slate-100 dark:hover:bg-neutral-800 rounded-full text-slate-500 transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500/40"
-            type="button"
-          >
-            <XIcon className="h-4 w-4" />
-          </button>
-        </div>
-      )}
+  // Cleanup typing on unmount or chat change
+  useEffect(() => {
+    return () => {
+      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+      // Reset ref on chat change so next chat starts fresh
+      isTypingRef.current = false;
+    };
+  }, [currentChat?.id]);
 
-      {/* File Preview */}
-      {selectedFile && (
-        <div className="max-w-4xl mx-auto mb-2 p-3 bg-white/85 dark:bg-neutral-900/45 backdrop-blur-xl rounded-2xl shadow-sm border border-slate-200/70 dark:border-neutral-800/70 animate-in zoom-in-95">
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="p-2.5 bg-primary-500/10 rounded-xl border border-primary-500/15">
-                {selectedFile.type.startsWith("image/")
-                  ? <PhotographIcon className="h-5 w-5 text-primary-600 dark:text-primary-400" />
-                  : <DocumentIcon className="h-5 w-5 text-primary-600 dark:text-primary-400" />}
-              </div>
-              <div className="min-w-0">
-                <p className="text-sm font-semibold truncate text-slate-900 dark:text-white">{selectedFile.name}</p>
-                <p className="text-[11px] text-slate-500 dark:text-neutral-400 font-medium">
-                  {(selectedFile.size / 1024 / 1024).toFixed(2)} MB
-                </p>
-              </div>
-            </div>
-            <button
-              onClick={() => setSelectedFile(null)}
-              className="p-1.5 hover:bg-slate-100 dark:hover:bg-neutral-800 rounded-full text-slate-500 transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500/40"
-              type="button"
-              aria-label="Remove selected file"
-            >
-              <XIcon className="h-4 w-4" />
-            </button>
-          </div>
-          {isUploading && (
-            <div className="mt-3">
-              <div className="h-2 w-full bg-slate-100 dark:bg-neutral-900 rounded-full overflow-hidden border border-slate-200/70 dark:border-neutral-800/70">
-                <div
-                  className="h-full bg-primary-500 transition-all duration-300"
-                  style={{ width: `${uploadProgress}%` }}
-                />
-              </div>
-              <p className="text-[9px] text-primary-600 dark:text-primary-400 font-bold mt-1 text-right tracking-tight">
-                {uploadProgress}% Uploading...
+  return (
+    <div {...getRootProps()} className="w-full relative">
+      <input {...getInputProps()} />
+
+      {/* Overlays (Reply/File) — sit above the bar */}
+      <div className="absolute bottom-full left-0 right-0 mb-1 flex flex-col gap-1.5">
+        {replyMessage && (
+          <div className="flex items-center justify-between px-4 py-2.5 bg-[#1F2937] border-l-4 border-[#635BFF] rounded-xl shadow-md animate-zoom-in mx-1">
+            <div className="flex-1 truncate mr-3">
+              <p className="text-[10px] font-black text-[#635BFF] uppercase tracking-wider">Replying to</p>
+              <p className="text-[13px] truncate font-medium text-[#9CA3AF]">
+                {replyMessage.imageUrl && !replyMessage.content && !replyMessage.message ? "📷 Photo" : (replyMessage.message || replyMessage.content)}
               </p>
             </div>
-          )}
+            {replyMessage.imageUrl && (
+              <div className="w-10 h-10 rounded-lg overflow-hidden shrink-0 border border-white/5 mr-2">
+                <img src={replyMessage.imageUrl} alt="Reply" className="w-full h-full object-cover" />
+              </div>
+            )}
+            <button onClick={() => setReplyMessage(null)} className="p-1.5 rounded-full hover:bg-[#2A3245] transition-colors text-[#6B7280] hover:text-[#F9FAFB] ml-2"><X size={16} /></button>
+          </div>
+        )}
+
+        {selectedFile && (
+          <div className="flex items-center justify-between px-4 py-2.5 bg-[#1F2937] rounded-xl shadow-md border border-[#2A3245] animate-zoom-in mx-1">
+            <div className="flex items-center gap-3 flex-1 truncate">
+              <div className="w-9 h-9 rounded-lg bg-[#635BFF]/10 flex items-center justify-center text-[#635BFF] overflow-hidden shrink-0">
+                {selectedFile.type.startsWith('image/') ? (
+                  <img src={URL.createObjectURL(selectedFile)} alt="Preview" className="w-full h-full object-cover rounded-lg" />
+                ) : (
+                  <File size={18} />
+                )}
+              </div>
+              <div className="truncate">
+                <p className="text-[13px] font-semibold truncate text-[#F9FAFB]">{selectedFile.name}</p>
+              </div>
+            </div>
+            <button onClick={() => setSelectedFile(null)} className="p-1.5 rounded-full hover:bg-[#2A3245] transition-colors text-[#6B7280] hover:text-[#F9FAFB] ml-2"><X size={16} /></button>
+          </div>
+        )}
+      </div>
+
+      {/* Emoji Picker */}
+      {showEmojiPicker && (
+        <div className="absolute bottom-full left-0 mb-2 z-50">
+          <Picker onEmojiClick={handleEmojiClick} theme="dark" />
         </div>
       )}
 
-      {showEmojiPicker && (
-        <div className="absolute bottom-full mb-6 left-6 z-50 animate-in fade-in slide-in-from-bottom-4 duration-300">
-          <div className="shadow-2xl rounded-2xl overflow-hidden border border-slate-200/80 dark:border-neutral-800/80 ring-1 ring-black/5 bg-white/95 dark:bg-neutral-950/80 backdrop-blur">
-            <Picker onEmojiClick={handleEmojiClick} autoFocusSearch={false} theme="auto" />
-          </div>
-        </div>
-      )}
-      
-      {/* The Main Pill Input */}
-      <form 
-        onSubmit={handleSubmit} 
-        className="flex items-end gap-2 w-full mx-auto"
-      >
-        <div className="flex items-center gap-0.5 pb-1">
+      {/* WhatsApp-style Input Row */}
+      <form onSubmit={handleSubmit} className="flex items-center gap-2 w-full">
+
+        {/* Pill — full width */}
+        <div className="flex-1 flex items-center gap-1 bg-[#1F2937] rounded-[28px] px-3 min-h-[52px] border border-[#2A3245] focus-within:border-[#635BFF]/30 transition-colors duration-200">
+
+          {/* Left: Emoji */}
+          <button
+            type="button"
+            onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+            className="p-2 text-[#6B7280] hover:text-[#9CA3AF] transition-colors shrink-0"
+          >
+            <Smile size={22} strokeWidth={1.5} />
+          </button>
+
+          {/* Left: Attachment */}
           <button
             type="button"
             onClick={open}
-            className="cursor-pointer p-2.5 text-slate-500 dark:text-neutral-400 hover:text-slate-600 dark:hover:text-neutral-300 transition-colors focus:outline-none focus:bg-slate-100 dark:focus:bg-neutral-800 rounded-lg"
-            aria-label="Upload file"
+            className="p-2 text-[#6B7280] hover:text-[#9CA3AF] transition-colors shrink-0"
           >
-            <PlusIcon className="h-6 w-6" />
+            <Plus size={22} strokeWidth={1.5} />
           </button>
-          <button 
-            type="button" 
-            onClick={() => setShowEmojiPicker(!showEmojiPicker)} 
-            className={`p-2.5 transition-colors focus:outline-none rounded-lg ${showEmojiPicker ? 'text-primary-500 bg-primary-50 dark:bg-primary-900/10' : 'text-slate-500 dark:text-neutral-400 hover:text-slate-600 dark:hover:text-neutral-300 focus:bg-slate-100 dark:focus:bg-neutral-800'}`}
-            aria-label="Toggle emoji picker"
-          >
-            <EmojiHappyIcon className="h-6 w-6" />
-          </button>
-        </div>
 
-        <div className="flex-1 min-w-0 bg-[#ffffff] dark:bg-[#2a3942] rounded-lg flex items-end">
+          {/* Textarea */}
           <textarea
-            rows="1"
-            placeholder={isDragActive ? "Drop files here..." : "Type a message"}
-            className="block w-full py-2.5 px-4 min-h-[44px] max-h-32 resize-none text-[15px] bg-transparent text-[#111b21] dark:text-[#d1d7db] placeholder-[#667781] dark:placeholder-[#8696a0] border-none focus:ring-0 focus:outline-none"
+            placeholder="Type a message..."
+            className="flex-1 bg-transparent border-0 outline-none focus:outline-none focus:ring-0 text-[#F9FAFB] placeholder:text-[#6B7280] text-[14px] font-normal resize-none max-h-[120px] py-[14px] custom-scrollbar leading-relaxed shadow-none"
             value={message}
-            onChange={(e) => { setMessage(e.target.value); handleTyping(); }}
-            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit(e); } }}
+            rows={1}
+            onBlur={sendStopTyping}
+            onChange={(e) => {
+              setMessage(e.target.value);
+              e.target.style.height = 'auto';
+              e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px';
+              handleTyping();
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                handleSubmit(e);
+                e.target.style.height = 'auto';
+              }
+            }}
           />
+
         </div>
 
-        <button 
-          type="submit" 
-          disabled={(!message.trim() && !selectedFile) || isUploading} 
-          className="
-            flex-shrink-0 flex items-center justify-center h-11 w-11 mb-0.5
-            bg-primary-500 hover:bg-primary-600 disabled:opacity-50 disabled:hover:bg-primary-500
-            text-white rounded-full shadow-lg shadow-primary-500/20 transition-all active:scale-95 focus:outline-none
-          "
-          aria-label="Send message"
+        {/* Send Button — WhatsApp-style circle */}
+        <button
+          type="submit"
+          disabled={!message.trim() && !selectedFile}
+          className="w-[52px] h-[52px] bg-gradient-to-br from-[#635BFF] to-[#7C3AED] hover:opacity-90 text-white rounded-full flex items-center justify-center transition-all shrink-0 shadow-md shadow-[#635BFF]/20 disabled:opacity-40 active:scale-95"
         >
-          <PaperAirplaneIcon className="h-5 w-5 rotate-90 relative left-0.5" />
+          <Send size={20} strokeWidth={2} className="ml-0.5" />
         </button>
-
       </form>
     </div>
   );

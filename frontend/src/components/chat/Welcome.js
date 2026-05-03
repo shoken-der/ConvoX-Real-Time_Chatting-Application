@@ -1,64 +1,52 @@
+import React from "react";
+import { MessageSquare, Zap, Shield, Globe } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
 
-export default function Welcome() {
+const FeatureCard = ({ icon: Icon, title, description, color }) => (
+  <div className="bg-surface p-6 rounded-[20px] shadow-premium flex flex-col items-center text-center group hover:-translate-y-1 hover:shadow-glow-primary transition-all duration-300 border border-border/40">
+    <div className={`w-12 h-12 rounded-2xl ${color} flex items-center justify-center mb-4 group-hover:scale-110 group-hover:rotate-3 transition-transform shadow-lg`}>
+      <Icon className="text-white" size={24} />
+    </div>
+    <h3 className="text-[15px] font-black text-text-main mb-1.5">{title}</h3>
+    <p className="text-[12px] text-text-secondary leading-relaxed font-semibold px-2">{description}</p>
+  </div>
+);
+
+const Welcome = () => {
   const { currentUser } = useAuth();
-  
+
+  const features = [
+    { icon: Zap, title: "Fast", description: "Instant real-time messaging", color: "bg-indigo-500" },
+    { icon: Shield, title: "Secure", description: "JWT protected endpoints", color: "bg-emerald-500" },
+    { icon: Globe, title: "Real-time", description: "WebSocket powered chat", color: "bg-blue-500" },
+  ];
+
   return (
-    <div className="flex-1 flex flex-col items-center justify-center p-8 text-center overflow-hidden bg-slate-50 dark:bg-neutral-950 relative animate-subtle-in">
-      {/* Ambient blobs */}
-      <div className="absolute top-1/4 left-1/4 w-72 h-72 bg-primary-500/5 dark:bg-primary-500/10 rounded-full blur-3xl pointer-events-none" />
-      <div className="absolute bottom-1/4 right-1/4 w-72 h-72 bg-secondary-500/5 dark:bg-secondary-500/10 rounded-full blur-3xl pointer-events-none" />
-
-      <div className="relative max-w-md w-full space-y-10">
-        {/* Animated Logo area */}
-        <div className="relative mx-auto w-32 h-32 flex items-center justify-center">
-          {/* Concentric animated rings */}
-          <div className="absolute inset-0 rounded-3xl bg-gradient-to-tr from-secondary-500/20 to-primary-500/20 animate-pulse" />
-          <div className="absolute -inset-3 rounded-[2rem] border border-secondary-200/30 dark:border-secondary-500/20 animate-[spin_8s_linear_infinite]" />
-          <div className="absolute -inset-6 rounded-[2.5rem] border border-primary-200/20 dark:border-primary-500/10 animate-[spin_14s_linear_infinite_reverse]" />
-          <div className="w-24 h-24 bg-gradient-to-tr from-secondary-600 to-primary-600 rounded-2xl flex items-center justify-center shadow-2xl shadow-secondary-500/30">
-            <svg className="w-12 h-12 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-            </svg>
-          </div>
+    <div className="w-full h-full flex flex-col items-center justify-center p-8 bg-background relative overflow-hidden">
+      {/* Premium background patterns */}
+      <div className="absolute -top-40 -right-40 w-[500px] h-[500px] bg-primary/5 rounded-full blur-[120px] pointer-events-none" />
+      <div className="absolute -bottom-40 -left-40 w-[500px] h-[500px] bg-secondary/5 rounded-full blur-[120px] pointer-events-none" />
+      
+      <div className="max-w-[600px] w-full flex flex-col items-center relative z-10 animate-fade-in-up">
+        <div className="w-20 h-20 rounded-[28px] bg-gradient-to-br from-primary to-secondary flex items-center justify-center shadow-2xl shadow-primary/20 mb-8 animate-bounce-slow">
+          <MessageSquare className="text-white" size={40} />
         </div>
 
-        {/* Text */}
-        <div className="space-y-4">
-          <h2 className="text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white">
-            Welcome back,{" "}
-            <span className="bg-clip-text text-transparent bg-gradient-to-r from-secondary-600 to-primary-600">
-              {currentUser?.displayName?.split(" ")[0] || "there"}!
-            </span>
-          </h2>
-          <p className="text-slate-500 dark:text-neutral-400 text-base leading-relaxed">
-            Your conversations are waiting. Select a chat from the sidebar, or search for someone new to message.
-          </p>
-        </div>
+        <h1 className="text-[32px] md:text-[40px] font-black text-text-main mb-3 tracking-tighter text-center leading-tight">
+          Welcome back, <span className="gradient-text">{currentUser?.displayName?.split(" ")[0] || "there"}</span>! 👋
+        </h1>
+        <p className="text-[15px] text-text-secondary text-center mb-12 max-w-[420px] font-medium leading-relaxed opacity-80">
+          Pick a conversation from the left to start chatting, or click the <span className="font-bold text-primary">+</span> icon to find someone new.
+        </p>
 
-        {/* Feature badges */}
-        <div className="grid grid-cols-3 gap-3">
-          {[
-            { icon: "⚡", label: "Real-time", desc: "Instant delivery" },
-            { icon: "🔒", label: "Secure", desc: "Firebase auth" },
-            { icon: "🎨", label: "Rich media", desc: "Files & reactions" },
-          ].map((f) => (
-            <div key={f.label} className="flex flex-col items-center gap-1.5 p-3 bg-white dark:bg-neutral-900 rounded-2xl border border-slate-100 dark:border-neutral-800 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-300">
-              <span className="text-2xl">{f.icon}</span>
-              <p className="text-[11px] font-bold text-slate-700 dark:text-white">{f.label}</p>
-              <p className="text-[10px] text-slate-400 dark:text-neutral-500">{f.desc}</p>
-            </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full">
+          {features.map((f, i) => (
+            <FeatureCard key={i} {...f} />
           ))}
-        </div>
-
-        {/* Online indicator */}
-        <div className="flex justify-center">
-          <div className="flex items-center gap-2 px-4 py-2 bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200/60 dark:border-emerald-500/20 rounded-full text-xs font-semibold text-emerald-600 dark:text-emerald-400">
-            <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
-            You're online and ready to chat
-          </div>
         </div>
       </div>
     </div>
   );
-}
+};
+
+export default Welcome;
