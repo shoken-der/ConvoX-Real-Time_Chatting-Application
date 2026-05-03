@@ -57,7 +57,10 @@ public class AuthServiceImpl implements AuthService {
         String encodedPassword = passwordEncoder.encode(request.getPassword());
         
         sendOtp(request.getEmail(), encodedPassword);
-        return null;
+        
+        return AuthResponse.builder()
+                .message("Verification code sent to your Gmail.")
+                .build();
     }
 
     private void saveOtp(String email, String code, String tempPassword) {
