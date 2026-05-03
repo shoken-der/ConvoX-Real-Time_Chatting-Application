@@ -48,7 +48,9 @@ public class EmailService {
             if (responseCode >= 200 && responseCode < 300) {
                 System.out.println("Email sent successfully via Brevo API!");
             } else {
-                System.err.println("Brevo API error: " + responseCode);
+                java.util.Scanner s = new java.util.Scanner(conn.getErrorStream()).useDelimiter("\\A");
+                String errorBody = s.hasNext() ? s.next() : "";
+                System.err.println("Brevo API error: " + responseCode + " - Body: " + errorBody);
             }
         } catch (Exception e) {
             System.err.println("REST EMAIL ERROR: " + e.getMessage());
