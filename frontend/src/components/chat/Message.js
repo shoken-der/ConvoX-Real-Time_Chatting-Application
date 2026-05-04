@@ -21,9 +21,15 @@ const Message = memo(({ message, self, senderUser, onReply, socket, receiverId, 
   // Local optimistic reactions — allows immediate visual feedback before API response
   const [localReactions, setLocalReactions] = useState(message.reactions || []);
   const editInputRef = useRef();
+  // Reaction lock: after the user manually reacts, block the prop-sync useEffect
+  // for 5s so that any incoming SEEN/WebSocket events carrying stale reactions
+  // cannot override the user's confirmed local state.
+  const reactionLockRef = useRef(false);
+  const reactionLockTimerRef = useRef(null);
 
-  // Keep localReactions in sync when the message reactions prop updates from WebSocket
+  // Keep localReactions in sync ONLY when no manual interaction is pending
   useEffect(() => {
+    if (reactionLockRef.current) return; // locked — user just reacted, trust local state
     setLocalReactions(message.reactions || []);
   }, [message.reactions]);
 
@@ -53,6 +59,12 @@ const Message = memo(({ message, self, senderUser, onReply, socket, receiverId, 
     }
 
     setLocalReactions(nextReactions);
+    // Lock prop-sync for 5s so incoming SEEN/echo events can't override this
+    reactionLockRef.current = true;
+    if (reactionLockTimerRef.current) clearTimeout(reactionLockTimerRef.current);
+    reactionLockTimerRef.current = setTimeout(() => {
+      reactionLockRef.current = false;
+    }, 5000);
     // --- End optimistic update ---
 
     try {
@@ -69,14 +81,16 @@ const Message = memo(({ message, self, senderUser, onReply, socket, receiverId, 
               chatRoomId: message.chatRoomId,
               messageId: message.id,
               reactions: res.reactions,
-              senderId: self, // ← required so receiver knows who reacted; sender ignores own echo
+              senderId: self,
             }),
           });
         }
       }
     } catch (err) {
       console.error("Error toggling reaction:", err);
-      // Roll back optimistic update on failure
+      // Roll back optimistic update on failure and release lock
+      reactionLockRef.current = false;
+      if (reactionLockTimerRef.current) clearTimeout(reactionLockTimerRef.current);
       setLocalReactions(message.reactions || []);
     }
   }, [localReactions, self, message, socket, onMessageUpdated]);
