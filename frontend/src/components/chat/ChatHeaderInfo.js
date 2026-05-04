@@ -4,12 +4,14 @@ import { ChevronLeft } from "lucide-react";
 import { getPresenceText } from "../../utils/presence";
 
 export default function ChatHeaderInfo({ chatRoom, currentUser, onlineUsersId }) {
-  const { setCurrentChat } = useChat();
+  const { setCurrentChat, chatRooms } = useChat();
 
   const contact = useMemo(() => {
-    const member = chatRoom?.members?.find((m) => m.id !== currentUser?.id);
+    // Find the freshest version of the room from chatRooms to get real-time lastSeen updates
+    const freshRoom = chatRooms?.find(r => r.id === chatRoom?.id) || chatRoom;
+    const member = freshRoom?.members?.find((m) => m.id !== currentUser?.id);
     return member || { displayName: "User" };
-  }, [chatRoom, currentUser?.id]);
+  }, [chatRoom, chatRooms, currentUser?.id]);
 
   const isOnline = onlineUsersId?.some(id => String(id) === String(contact.id));
 

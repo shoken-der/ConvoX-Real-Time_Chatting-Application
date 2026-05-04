@@ -1,6 +1,6 @@
-import { useState, useEffect, useMemo, useRef, memo } from "react";
+import { useState, useEffect, useMemo, memo } from "react";
 import { getUser } from "../../services/ChatService";
-import { MoreVertical, EyeOff, Trash2 } from "lucide-react";
+import { Trash2 } from "lucide-react";
 
 const Avatar = ({ user, isOnline, isSelected }) => {
   const initials = user?.displayName?.split(" ").map(n => n[0]).join("").toUpperCase().slice(0, 2) || "U";
@@ -37,20 +37,8 @@ const Avatar = ({ user, isOnline, isSelected }) => {
   );
 };
 
-const Contact = memo(({ chatRoom, onlineUsersId, currentUser, isSelected, typingStatus = {}, onHide, onDelete }) => {
+const Contact = memo(({ chatRoom, onlineUsersId, currentUser, isSelected, typingStatus = {}, onDelete }) => {
   const [contact, setContact] = useState({});
-  const [showMenu, setShowMenu] = useState(false);
-  const menuRef = useRef(null);
-
-  useEffect(() => {
-    const handleClickOutside = (event) => {
-      if (menuRef.current && !menuRef.current.contains(event.target)) {
-        setShowMenu(false);
-      }
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
 
   useEffect(() => {
     const member = chatRoom?.members?.find((m) => m.id !== currentUser?.id);
@@ -100,11 +88,7 @@ const Contact = memo(({ chatRoom, onlineUsersId, currentUser, isSelected, typing
     return date.toLocaleDateString([], { month: "short", day: "numeric" });
   }, [lastMessage, chatRoom]);
 
-  const handleHideClick = (e) => {
-    e.stopPropagation();
-    onHide && onHide(chatRoom.id);
-    setShowMenu(false);
-  };
+  // handleHideClick removed as menu is removed
 
   const handleDeleteClick = (e) => {
     e.stopPropagation();
