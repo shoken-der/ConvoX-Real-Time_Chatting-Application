@@ -10,6 +10,7 @@ export function ChatProvider({ children }) {
   const { currentUser } = useAuth();
   const [chatRooms, setChatRooms] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [messagesLoading, setMessagesLoading] = useState(false);
   const [hasInitiallyLoaded, setHasInitiallyLoaded] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [currentChat, setCurrentChat] = useState(null);
@@ -72,6 +73,7 @@ export function ChatProvider({ children }) {
 
   const fetchMessages = useCallback(async (roomId, page = 0) => {
     if (!roomId) return;
+    if (page === 0) setMessagesLoading(true);
     try {
       const res = await getMessagesOfChatRoom(roomId, page, 50);
       const chronMessages = [...res].reverse();
@@ -87,9 +89,8 @@ export function ChatProvider({ children }) {
         });
       }
       return res;
-    } catch (err) {
-      console.error("Fetch Messages Error:", err);
-      return [];
+    } finally {
+      if (page === 0) setMessagesLoading(false);
     }
   }, []);
 
@@ -333,6 +334,7 @@ export function ChatProvider({ children }) {
     setSelectedImage,
     messages,
     setMessages,
+    messagesLoading,
     updateChatRooms,
     refresh: fetchData,
     socket,

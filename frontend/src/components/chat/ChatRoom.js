@@ -45,7 +45,7 @@ function ConnectionBanner({ connected }) {
 
 export default function ChatRoom() {
   const { currentUser } = useAuth();
-  const { currentChat, socket, connected, onlineUsersId, setSelectedImage, emit } = useChat();
+  const { currentChat, socket, connected, onlineUsersId, setSelectedImage, emit, messagesLoading } = useChat();
 
   const {
     messages,
@@ -282,13 +282,13 @@ export default function ChatRoom() {
           <div className="flex flex-col justify-end min-h-full px-3 md:px-4 w-full">
             <div ref={topRef} className="h-1 w-full" />
 
-            {loading && messages.length === 0 ? (
+            {(loading || messagesLoading) && messages.length === 0 ? (
               <div className="flex flex-col gap-1">
                 {[...Array(5)].map((_, i) => (
                   <MessageSkeleton key={i} self={i % 2 === 0} />
                 ))}
               </div>
-            ) : !loading && messages.length === 0 ? (
+            ) : !(loading || messagesLoading) && messages.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-[50vh] gap-4 animate-zoom-in">
                 <div className="w-20 h-20 bg-surface rounded-full flex items-center justify-center shadow-premium border border-border/40">
                   <MessageSquare className="text-primary w-8 h-8 opacity-40" />
