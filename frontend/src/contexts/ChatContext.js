@@ -8,14 +8,23 @@ const ChatContext = createContext();
 
 export function ChatProvider({ children }) {
   const { currentUser } = useAuth();
-  const [chatRooms, setChatRooms] = useState([]);
+  const [chatRooms, setChatRooms] = useState(() => {
+    const saved = localStorage.getItem("chatRooms");
+    return saved ? JSON.parse(saved) : [];
+  });
   const [loading, setLoading] = useState(true);
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [hasInitiallyLoaded, setHasInitiallyLoaded] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [currentChat, setCurrentChat] = useState(null);
+  const [currentChat, setCurrentChat] = useState(() => {
+    const saved = sessionStorage.getItem("currentChat");
+    return saved ? JSON.parse(saved) : null;
+  });
   const [messages, setMessages] = useState([]);
-  const [messageCache, setMessageCache] = useState({}); // { roomId: messages[] }
+  const [messageCache, setMessageCache] = useState(() => {
+    const saved = localStorage.getItem("messageCache");
+    return saved ? JSON.parse(saved) : {};
+  });
   const [typingStatus, setTypingStatus] = useState({}); // { roomId: { name, photo, isTyping } }
   const [onlineUsersId, setOnlineUsersId] = useState([]);
   const [selectedImage, setSelectedImage] = useState(null);
@@ -28,14 +37,14 @@ export function ChatProvider({ children }) {
   // Use our new STOMP-based socket hook
   const { socket, connected, emit, on, subscribe } = useSocket();
 
+  // Persistence effects
   useEffect(() => {
-    const savedChat = sessionStorage.getItem("currentChat");
-    if (savedChat) {
-      try {
-        setCurrentChat(JSON.parse(savedChat));
-      } catch (e) {}
-    }
-  }, []);
+    localStorage.setItem("chatRooms", JSON.stringify(chatRooms));
+  }, [chatRooms]);
+
+  useEffect(() => {
+    localStorage.setItem("messageCache", JSON.stringify(messageCache));
+  }, [messageCache]);
 
   useEffect(() => {
     if (currentChat) {
@@ -47,7 +56,7 @@ export function ChatProvider({ children }) {
 
   const fetchData = useCallback(async () => {
     if (!currentUser?.id) return;
-    if (!hasInitiallyLoaded) setLoading(true);
+    if (!hasInitiallyLoaded && chatRooms.length === 0) setLoading(true);
     try {
       const rooms = await getChatRooms(currentUser.id);
       setChatRooms(rooms || []);

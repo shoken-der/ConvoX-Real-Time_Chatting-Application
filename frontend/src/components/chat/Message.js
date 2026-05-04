@@ -162,9 +162,12 @@ const Message = memo(({ message, self, senderUser, onReply, socket, receiverId, 
           onClick={() => !isLoading && onImageClick && onImageClick(imageUrl)}
         >
           {isLoading ? (
-            <div className="w-[220px] h-[160px] bg-[#111827] flex flex-col items-center justify-center gap-3">
-              <div className="w-8 h-8 border-2 border-[#635BFF]/30 border-t-[#635BFF] rounded-full animate-spin" />
-              <span className="text-[10px] font-bold text-[#635BFF] uppercase tracking-widest animate-pulse">Uploading...</span>
+            <div className="relative w-[220px] min-h-[160px] bg-[#111827] flex flex-col items-center justify-center overflow-hidden rounded-xl">
+              <img src={imageUrl} alt="" className="absolute inset-0 w-full h-full object-cover blur-sm opacity-40 scale-110" />
+              <div className="relative z-10 flex flex-col items-center gap-2">
+                <div className="w-8 h-8 border-2 border-[#635BFF]/30 border-t-[#635BFF] rounded-full animate-spin" />
+                <span className="text-[10px] font-black text-white uppercase tracking-widest drop-shadow-md">Sending...</span>
+              </div>
             </div>
           ) : (
             <img

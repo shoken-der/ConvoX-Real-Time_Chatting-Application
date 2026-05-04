@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, memo } from "react";
 import { getUser } from "../../services/ChatService";
 import { MoreVertical, EyeOff, Trash2 } from "lucide-react";
 
@@ -37,7 +37,7 @@ const Avatar = ({ user, isOnline, isSelected }) => {
   );
 };
 
-export default function Contact({ chatRoom, onlineUsersId, currentUser, isSelected, typingStatus = {}, onHide, onDelete }) {
+const Contact = memo(({ chatRoom, onlineUsersId, currentUser, isSelected, typingStatus = {}, onHide, onDelete }) => {
   const [contact, setContact] = useState({});
   const [showMenu, setShowMenu] = useState(false);
   const menuRef = useRef(null);
@@ -193,4 +193,7 @@ export default function Contact({ chatRoom, onlineUsersId, currentUser, isSelect
       )}
     </div>
   );
-}
+});
+
+Contact.displayName = "Contact";
+export default Contact;

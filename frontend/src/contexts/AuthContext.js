@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect } from "react";
 import axios from "axios";
+import SplashScreen from "../components/layouts/SplashScreen";
 
 const AuthContext = createContext();
 
@@ -74,13 +75,19 @@ export function AuthProvider({ children }) {
   }
 
   useEffect(() => {
-    const savedUser = localStorage.getItem("user");
-    const token = localStorage.getItem("token");
-    if (savedUser && token) {
-      setCurrentUser(JSON.parse(savedUser));
-      refreshUser();
-    }
-    setLoading(false);
+    const init = async () => {
+      const savedUser = localStorage.getItem("user");
+      const token = localStorage.getItem("token");
+      if (savedUser && token) {
+        try {
+          setCurrentUser(JSON.parse(savedUser));
+          await refreshUser();
+        } catch (e) {}
+      }
+      // Add a small artificial delay for the splash screen to feel intentional and smooth
+      setTimeout(() => setLoading(false), 800);
+    };
+    init();
   }, []);
 
   const verifyEmail = async (email, code) => {
@@ -142,7 +149,7 @@ export function AuthProvider({ children }) {
 
   return (
     <AuthContext.Provider value={value}>
-      {!loading && children}
+      {loading ? <SplashScreen /> : children}
     </AuthContext.Provider>
   );
 }

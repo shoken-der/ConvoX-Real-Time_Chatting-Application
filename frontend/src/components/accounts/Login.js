@@ -35,7 +35,7 @@ export default function Login() {
   }
 
   return (
-    <div className="h-screen flex items-center justify-center p-4 bg-[#0F1321] relative overflow-hidden">
+    <div className="h-screen flex items-center justify-center p-4 bg-[#0F1321] relative overflow-hidden page-transition">
       {/* Figma Spec Gradient Overlay */}
       <div 
         className="absolute inset-0 pointer-events-none z-0"

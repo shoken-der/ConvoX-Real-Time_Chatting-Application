@@ -77,7 +77,7 @@ export default function ChatLayout() {
   };
 
   return (
-    <div className="flex h-screen bg-[#0B0F19] overflow-hidden font-sans relative text-[#F9FAFB]">
+    <div className="flex h-screen bg-[#0B0F19] overflow-hidden font-sans relative text-[#F9FAFB] page-transition">
       <ErrorMessage />
 
       {/* Fullscreen Glassmorphic Image Previewer */}
