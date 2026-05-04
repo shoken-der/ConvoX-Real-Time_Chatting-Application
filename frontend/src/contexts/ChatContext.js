@@ -154,6 +154,10 @@ export function ChatProvider({ children }) {
     // Helper to apply an update to a list of messages
     const updateMessageList = (prev) => {
       if (data.type === "REACTION") {
+        // Only apply REACTION events from the OTHER user.
+        // Our own reactions are already handled optimistically in Message.js,
+        // so applying them again from the STOMP echo would cause duplication/reappearance bugs.
+        if (String(data.senderId) === String(currentUser?.id)) return prev;
         return prev.map(m => m.id === data.messageId ? { ...m, reactions: data.reactions } : m);
       } else if (data.type === "EDIT") {
         return prev.map(m => m.id === data.messageId ? { ...m, ...data, id: data.messageId, imageUrl: m.imageUrl || data.imageUrl } : m);
@@ -162,10 +166,14 @@ export function ChatProvider({ children }) {
       } else if (data.type === "SEEN") {
         return prev.map(m => m.id === data.messageId ? {
           ...m,
-          ...data,
+          // Only update seen-specific fields — NEVER overwrite reactions, imageUrl, etc.
+          // Overwriting reactions here is what caused the "reaction reappears" bug.
+          seenBy: data.seenBy || m.seenBy,
           id: data.messageId,
           imageUrl: m.imageUrl || data.imageUrl,
-          fileType: m.fileType || data.fileType
+          fileType: m.fileType || data.fileType,
+          isEdited: data.isEdited !== undefined ? data.isEdited : m.isEdited,
+          isDeleted: data.isDeleted !== undefined ? data.isDeleted : m.isDeleted,
         } : m);
       } else if (!data.type) {
         const dataId = data.id ? String(data.id) : null;

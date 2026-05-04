@@ -69,6 +69,7 @@ const Message = memo(({ message, self, senderUser, onReply, socket, receiverId, 
               chatRoomId: message.chatRoomId,
               messageId: message.id,
               reactions: res.reactions,
+              senderId: self, // ← required so receiver knows who reacted; sender ignores own echo
             }),
           });
         }
