@@ -83,17 +83,11 @@ export function AuthProvider({ children }) {
     setLoading(false);
   }, []);
 
-  const verifyEmail = async (email, code, password) => {
+  const verifyEmail = async (email, code) => {
     try {
-      // First verify
-      await axios.post(`${API_BASE_URL}/api/auth/verify-email?email=${email}&code=${code}`);
-      
-      // Then auto-login so they go to Profile Setup
-      const response = await axios.post(`${API_BASE_URL}/api/auth/login`, {
-        email, password
-      });
-      
+      const response = await axios.post(`${API_BASE_URL}/api/auth/verify-email?email=${email}&code=${code}`);
       const { token, user } = response.data;
+      
       localStorage.setItem("token", token);
       localStorage.setItem("user", JSON.stringify(user));
       setCurrentUser(user);

@@ -7,7 +7,7 @@ import com.convox.dto.response.AuthResponse;
 public interface AuthService {
     AuthResponse register(RegisterRequest request);
     AuthResponse login(LoginRequest request);
-    void verifyEmail(String email, String code);
+    AuthResponse verifyEmail(String email, String code);
     void resendOtp(String email);
     void forgotPassword(String email);
     void resetPassword(String email, String code, String newPassword);

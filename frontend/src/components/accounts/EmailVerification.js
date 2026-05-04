@@ -41,7 +41,24 @@ export default function EmailVerification() {
 
     if (value && index < 5) {
       inputRefs[index + 1].current.focus();
+    } else if (value && index === 5) {
+      // Auto-submit when the last digit is entered
+      const code = newOtp.join("");
+      if (code.length === 6) {
+        autoSubmit(code);
+      }
     }
+  };
+
+  const autoSubmit = async (code) => {
+    setLoading(true);
+    try {
+      await verifyEmail(email, code);
+      navigate("/profile-setup");
+    } catch (err) {
+      // Error handled by context
+    }
+    setLoading(false);
   };
 
   const handleKeyDown = (index, e) => {
@@ -57,7 +74,7 @@ export default function EmailVerification() {
 
     setLoading(true);
     try {
-      await verifyEmail(email, code, password);
+      await verifyEmail(email, code);
       navigate("/profile-setup");
     } catch (err) {
       // Error handled by context

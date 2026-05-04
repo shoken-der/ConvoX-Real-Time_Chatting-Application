@@ -53,10 +53,10 @@ public class AuthServiceImpl implements AuthService {
         });
 
         // 2. If we reach here, the user either doesn't exist OR is unverified (enabled = false)
-        // Now do the slow work (Password hashing takes ~300ms-500ms)
-        String encodedPassword = passwordEncoder.encode(request.getPassword());
+        // Optimization: Defer password hashing until the user actually verifies their email.
+        // This makes the registration response "instant".
         
-        sendOtp(request.getEmail(), encodedPassword);
+        sendOtp(request.getEmail(), request.getPassword());
         
         return AuthResponse.builder()
                 .message("Verification code sent to your Gmail.")
@@ -77,7 +77,7 @@ public class AuthServiceImpl implements AuthService {
     }
 
     @Override
-    public void verifyEmail(String email, String code) {
+    public AuthResponse verifyEmail(String email, String code) {
         OtpCode otp = otpCodeRepository.findTopByEmailOrderByCreatedAtDesc(email)
                 .orElseThrow(() -> new RuntimeException("We couldn't find a verification code for this email. Please try registering again."));
         
@@ -89,23 +89,57 @@ public class AuthServiceImpl implements AuthService {
             throw new RuntimeException("The code you entered is incorrect. Please check your Gmail and try again.");
         }
         
+        String plainPassword = otp.getTempPassword();
+        String encodedPassword = null;
+        
+        if (plainPassword != null) {
+            // Now we do the slow work of encoding the password, only after verification
+            encodedPassword = passwordEncoder.encode(plainPassword);
+        }
+
+        User user;
         // NOW we create the user officially if they don't exist
         if (!userRepository.existsByEmail(email)) {
-            User user = User.builder()
+            user = User.builder()
                     .email(email)
-                    .password(otp.getTempPassword())
+                    .password(encodedPassword)
                     .enabled(true)
                     .profileCompleted(false)
                     .build();
-            userRepository.save(user);
+            user = userRepository.save(user);
         } else {
-            User user = userRepository.findByEmail(email).get();
+            user = userRepository.findByEmail(email).get();
             user.setEnabled(true);
-            user.setPassword(otp.getTempPassword()); // Sync password from latest registration attempt
-            userRepository.save(user);
+            if (encodedPassword != null) {
+                user.setPassword(encodedPassword); // Sync password from latest registration attempt
+            }
+            user = userRepository.save(user);
         }
         
         otpCodeRepository.deleteByEmail(email);
+
+        // Combined: Auto-login after verification to make it "instant" like WhatsApp
+        Authentication authentication;
+        if (plainPassword != null) {
+            // Registration flow: we have the plain password to authenticate
+            authentication = authenticationManager.authenticate(
+                    new UsernamePasswordAuthenticationToken(email, plainPassword)
+            );
+        } else {
+            // Forgot password flow or other: we might not have the plain password here
+            // In a real app, you might want to return a special token or just message.
+            // For now, let's assume registration always provides tempPassword.
+            return AuthResponse.builder().message("Email verified successfully. Please login.").build();
+        }
+
+        SecurityContextHolder.getContext().setAuthentication(authentication);
+        String jwt = tokenProvider.generateToken(authentication);
+
+        return AuthResponse.builder()
+                .token(jwt)
+                .user(entityMapper.toUserResponse(user))
+                .message("Email verified successfully!")
+                .build();
     }
 
     @Override

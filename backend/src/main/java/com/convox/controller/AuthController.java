@@ -34,9 +34,8 @@ public class AuthController {
     }
 
     @PostMapping("/verify-email")
-    public ResponseEntity<String> verifyEmail(@RequestParam String email, @RequestParam String code) {
-        authService.verifyEmail(email, code);
-        return ResponseEntity.ok("Email verified successfully");
+    public ResponseEntity<AuthResponse> verifyEmail(@RequestParam String email, @RequestParam String code) {
+        return ResponseEntity.ok(authService.verifyEmail(email, code));
     }
 
     @PostMapping("/resend-otp")
