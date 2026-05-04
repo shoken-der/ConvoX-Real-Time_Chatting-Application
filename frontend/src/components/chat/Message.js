@@ -241,36 +241,36 @@ const Message = memo(({ message, self, senderUser, onReply, socket, receiverId, 
 
   const isImageOnly = imageUrl && !text && !isDeleted;
 
+  const scrollToOriginal = useCallback((e) => {
+    const replyId = message.replyTo?.id;
+    if (!replyId) return;
+    
+    e.stopPropagation();
+    const element = document.getElementById(`msg-${replyId}`);
+    if (element) {
+      element.scrollIntoView({ behavior: "smooth", block: "center" });
+      
+      // Trigger highlight effect
+      const bubble = element.querySelector('.message-bubble');
+      if (bubble) {
+        bubble.classList.remove('highlight-pulse');
+        void bubble.offsetWidth; // Force reflow
+        bubble.classList.add('highlight-pulse');
+      }
+    } else {
+      console.warn(`Message with ID msg-${replyId} not found in DOM`);
+    }
+  }, [message.replyTo?.id]);
+
   // Reply preview: show sender name for context, show thumbnail if available
   const renderReplyPreview = () => {
     if (!message.replyTo || isDeleted) return null;
     const replyImageUrl = message.replyTo.imageUrl || message.replyTo.mediaUrl || null;
     const replyText = message.replyTo.content || message.replyTo.message || null;
     const replySenderName = message.replyTo.senderName || null;
-    const replyId = message.replyTo.id;
-
-    const scrollToOriginal = (e) => {
-      e.stopPropagation();
-      if (!replyId) return;
-      
-      const element = document.getElementById(`msg-${replyId}`);
-      if (element) {
-        element.scrollIntoView({ behavior: "smooth", block: "center" });
-        
-        // Trigger highlight effect on the target message
-        // We look for the bubble inside that element
-        const bubble = element.querySelector('.message-bubble');
-        if (bubble) {
-          bubble.classList.remove('highlight-pulse');
-          void bubble.offsetWidth; // Force reflow
-          bubble.classList.add('highlight-pulse');
-        }
-      }
-    };
 
     return (
       <div 
-        onClick={scrollToOriginal}
         className={`mb-2 p-2 rounded-xl text-[12px] border-l-4 flex items-center justify-between gap-3 cursor-pointer hover:opacity-80 transition-opacity ${isSelf ? "bg-white/10 border-white/40 text-white/90" : "bg-surface border-primary/30 text-text-secondary"}`}
       >
         <div className="flex-1 min-w-0">
@@ -307,9 +307,11 @@ const Message = memo(({ message, self, senderUser, onReply, socket, receiverId, 
 
         <div className="relative group/bubble">
           <div
+            onClick={message.replyTo ? scrollToOriginal : undefined}
             className={`
               message-bubble transition-all duration-300
               ${isImageOnly ? "p-0 bg-transparent" : "px-3 py-2"}
+              ${message.replyTo ? "cursor-pointer active:scale-[0.98]" : ""}
               ${isSelf
                 ? (isImageOnly ? "" : "bg-gradient-to-br from-[#635BFF] to-[#6B4FFF] text-white rounded-[16px] rounded-br-[4px] shadow-sm shadow-[#635BFF]/10")
                 : (isImageOnly ? "" : "bg-[#1F2937] border border-[#2A3245] text-[#F9FAFB] rounded-[16px] rounded-bl-[4px]")
