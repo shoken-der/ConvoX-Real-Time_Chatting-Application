@@ -11,10 +11,12 @@ const getUserToken = () => {
 };
 
 export const initiateSocketConnection = (userId) => {
+  const token = getUserToken();
   const stompClient = new Client({
     webSocketFactory: () => new SockJS(`${API_URL}/ws`),
     connectHeaders: {
-      userId: userId ? userId.toString() : null
+      userId: userId ? userId.toString() : null,
+      Authorization: token ? `Bearer ${token}` : null
     },
     debug: (str) => {
       // Quiet STOMP logs in production
