@@ -11,7 +11,6 @@ import {
 import { toggleReaction, deleteMessage, editMessage } from "../../services/ChatService";
 
 const Message = memo(({ message, self, senderUser, onReply, socket, receiverId, onMessageUpdated, onImageClick }) => {
-  const [highlight, setHighlight] = useState(false);
   const isDeleted = message.isDeleted || message.deleted;
   const senderId = message.sender?.id || message.senderId || message.sender;
   const isSelf = Boolean(self && senderId && String(self) === String(senderId));

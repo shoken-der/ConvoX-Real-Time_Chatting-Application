@@ -100,13 +100,14 @@ public class ChatMessageServiceImpl implements ChatMessageService {
         }
         
         reactionRepository.flush();
-        // Force reload with reactions to ensure we have the absolute latest state from DB
+        // Clear the persistence context to force a fresh load from the database, 
+        // preventing stale reactions from appearing in the response.
+        entityManager.clear();
+        
         ChatMessage updated = messageRepository.findByIdWithReactions(messageId)
                 .orElseThrow(() -> new RuntimeException("Message not found after update"));
         
-        MessageResponse response = entityMapper.toMessageResponse(updated);
-
-        return response;
+        return entityMapper.toMessageResponse(updated);
     }
 
     @Override
@@ -114,10 +115,14 @@ public class ChatMessageServiceImpl implements ChatMessageService {
         ChatMessage message = messageRepository.findById(messageId).orElseThrow();
         message.setContent(text);
         message.setEdited(true);
-        return entityMapper.toMessageResponse(messageRepository.save(message));
+        messageRepository.flush();
+        entityManager.clear();
+        ChatMessage updated = messageRepository.findById(messageId).orElseThrow();
+        return entityMapper.toMessageResponse(updated);
     }
 
     @Override
+    @Transactional
     public MessageResponse deleteMessage(Long messageId, Long userId) {
         ChatMessage message = messageRepository.findById(messageId).orElseThrow();
         
@@ -135,10 +140,12 @@ public class ChatMessageServiceImpl implements ChatMessageService {
     @Override
     @Transactional
     public MessageResponse markMessageSeen(Long messageId, Long userId) {
-        ChatMessage message = messageRepository.findById(messageId).orElseThrow();
+        ChatMessage message = messageRepository.findByIdWithReactions(messageId).orElseThrow();
         User user = userRepository.findById(userId).orElseThrow();
         message.getSeenBy().add(user);
-        return entityMapper.toMessageResponse(messageRepository.save(message));
+        ChatMessage saved = messageRepository.save(message);
+        messageRepository.flush();
+        return entityMapper.toMessageResponse(saved);
     }
 
     private void createNewReaction(Long messageId, Long userId, String emoji) {
