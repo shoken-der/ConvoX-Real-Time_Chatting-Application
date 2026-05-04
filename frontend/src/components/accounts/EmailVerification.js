@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../../contexts/AuthContext";
+import { useToast } from "../../contexts/ToastContext";
 import ErrorMessage from "../layouts/ErrorMessage";
 import { ShieldCheck, ArrowLeft, RefreshCw } from "lucide-react";
 
@@ -8,6 +9,7 @@ export default function EmailVerification() {
   const navigate = useNavigate();
   const location = useLocation();
   const { currentUser, verifyEmail, resendOtp, setError, clearAuth } = useAuth();
+  const { addToast } = useToast();
   const email = location.state?.email || currentUser?.email;
   const password = location.state?.password;
 
@@ -68,6 +70,7 @@ export default function EmailVerification() {
     try {
       await resendOtp(email);
       setError("");
+      addToast({ message: "Verification code resent successfully!", type: "success" });
     } catch (err) {}
     setResending(false);
   };
