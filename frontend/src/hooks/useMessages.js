@@ -3,7 +3,7 @@ import { getMessagesOfChatRoom } from "../services/ChatService";
 import { useChatContext } from "../contexts/ChatContext";
 
 export default function useMessages(currentChatId, socket, currentUserId, connected) {
-  const { messages, setMessages } = useChatContext();
+  const { messages, setMessages, updateTypingStatus } = useChatContext();
   const [loading, setLoading] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [page, setPage] = useState(0);
@@ -12,7 +12,18 @@ export default function useMessages(currentChatId, socket, currentUserId, connec
   const typingTimerRef = useRef(null);
   const LIMIT = 50;
 
-  // Typing indicator logic still belongs here as it's room-specific and transient
+  // Reset pagination state when switching chats — prevents page 2 fetch on a new chat
+  useEffect(() => {
+    setPage(0);
+    setHasMore(true);
+    setIsTyping(false);
+    setTypingUser(null);
+  }, [currentChatId]);
+
+  // Single typing subscription — the ONLY place we subscribe to typing events.
+  // ChatContext no longer has a duplicate subscription.
+  // We thread the typing state back up to ChatContext via updateTypingStatus
+  // so the sidebar Contact.js "Typing..." label still works.
   useEffect(() => {
     if (!connected || !socket?.current?.connected || !currentChatId) return;
     const client = socket.current;
@@ -22,25 +33,37 @@ export default function useMessages(currentChatId, socket, currentUserId, connec
         const data = JSON.parse(frame.body);
         if (String(data.senderId) === String(currentUserId)) return;
 
+        const roomId = data.chatRoomId || currentChatId;
+
         if (data.typing !== false) {
+          const userInfo = { name: data.senderName || "Someone", photo: data.senderPhoto };
           setIsTyping(true);
-          setTypingUser({ name: data.senderName || "Someone", photo: data.senderPhoto });
+          setTypingUser(userInfo);
+
+          // Update sidebar typing status too
+          updateTypingStatus(roomId, { ...userInfo, isTyping: true });
+
           if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
           typingTimerRef.current = setTimeout(() => {
-            setIsTyping(true); // Keep user data
             setIsTyping(false);
+            updateTypingStatus(roomId, { name: data.senderName, photo: data.senderPhoto, isTyping: false });
           }, 4000);
         } else {
           setIsTyping(false);
+          setTypingUser(null);
+          updateTypingStatus(roomId, { name: data.senderName, photo: data.senderPhoto, isTyping: false });
+          if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
         }
       });
+
       return () => {
         try { typingSub.unsubscribe(); } catch (e) {}
+        if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
       };
     } catch (err) {
       console.error("Typing subscribe error:", err);
     }
-  }, [connected, currentChatId, currentUserId, socket]);
+  }, [connected, currentChatId, currentUserId, socket, updateTypingStatus]);
 
   const loadMore = async () => {
     if (!loading && hasMore && currentChatId) {
@@ -63,14 +86,13 @@ export default function useMessages(currentChatId, socket, currentUserId, connec
   const updateLocalMessage = useCallback((updatedMsg) => {
     setMessages(prev => prev.map(m => {
       if (m.id === updatedMsg.id) {
-        // IMAGE GUARD: Don't let null fields from status updates wipe out our image/file data
         return {
           ...m,
           ...updatedMsg,
           imageUrl: updatedMsg.imageUrl || m.imageUrl,
           fileType: updatedMsg.fileType || m.fileType,
           fileSize: updatedMsg.fileSize || m.fileSize,
-          isUploading: updatedMsg.imageUrl ? false : m.isUploading // If we got a real URL, stop loading
+          isUploading: updatedMsg.imageUrl ? false : m.isUploading
         };
       }
       return m;
@@ -79,13 +101,13 @@ export default function useMessages(currentChatId, socket, currentUserId, connec
 
   const addLocalMessage = useCallback((newMsg) => {
     setMessages(prev => {
-       if (prev.some(m => m.id === newMsg.id || (newMsg.tempId && m.tempId === newMsg.tempId))) return prev;
-       return [...prev, newMsg];
+      if (prev.some(m => m.id === newMsg.id || (newMsg.tempId && m.tempId === newMsg.tempId))) return prev;
+      return [...prev, newMsg];
     });
   }, [setMessages]);
 
   const resolveOptimisticMessage = useCallback((tempId, realMsg) => {
-    setMessages(prev => prev.map(m => m.tempId === tempId ? realMsg : m));
+    setMessages(prev => prev.map(m => m.tempId === tempId ? { ...realMsg, isOptimistic: false } : m));
   }, [setMessages]);
 
   return {

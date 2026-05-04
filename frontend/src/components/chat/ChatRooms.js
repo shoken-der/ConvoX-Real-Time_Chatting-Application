@@ -5,12 +5,15 @@ import Contact from "./Contact";
 import { MessageCircle } from "lucide-react";
 
 const ChatRooms = ({ onChatChange, onUserClick, onHideChat, onDeleteChat }) => {
-  const { sortedRooms = [], searchQuery, loading, currentChat, onlineUsersId, typingStatus } = useChat();
+  const { sortedRooms = [], searchQuery, loading, hasInitiallyLoaded, currentChat, onlineUsersId, typingStatus } = useChat();
   const { currentUser } = useAuth();
 
   const displayRooms = sortedRooms;
 
-  if (loading && sortedRooms.length === 0) {
+  // Show skeleton ONLY when actively loading AND we have no cached data yet.
+  // hasInitiallyLoaded being true means rooms have been fetched at least once,
+  // so we never show a skeleton if we already have data in the list.
+  if (loading && !hasInitiallyLoaded && sortedRooms.length === 0) {
     return (
       <div className="space-y-2">
         {[1, 2, 3, 4, 5, 6].map((i) => (
@@ -29,8 +32,9 @@ const ChatRooms = ({ onChatChange, onUserClick, onHideChat, onDeleteChat }) => {
     );
   }
 
-
-  if (displayRooms.length === 0) {
+  // Show empty state ONLY after we have confirmed there are no conversations
+  // (hasInitiallyLoaded ensures we don't flash this before the first fetch)
+  if (hasInitiallyLoaded && displayRooms.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-20 px-10 text-center animate-fade-in">
         <div className="w-16 h-16 bg-surface-elevated rounded-3xl flex items-center justify-center mb-4 border border-border/40">

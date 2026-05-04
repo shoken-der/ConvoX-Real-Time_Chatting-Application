@@ -47,7 +47,6 @@ export const getAllUsers = async () => {
   try {
     const res = await axios.get(`${baseURL}/user`, header);
     return res.data || [];
-    return res.data || [];
   } catch (e) {
     console.error("ChatService - Get All Users Error:", e.response?.data || e.message);
     return [];
@@ -83,7 +82,6 @@ export const getChatRooms = async (userId) => {
 
   try {
     const res = await axios.get(`${baseURL}/room/${userId}`, header);
-    return res.data || [];
     return res.data || [];
   } catch (e) {
     console.error("ChatService - Get Chat Rooms Error:", e.response?.data || e.message);
@@ -123,7 +121,6 @@ export const getMessagesOfChatRoom = async (chatRoomId, page = 0, limit = 50) =>
 
   try {
     const res = await axios.get(`${baseURL}/message/${chatRoomId}?page=${page}&limit=${limit}`, header);
-    return res.data || [];
     return res.data || [];
   } catch (e) {
     console.error("ChatService - Get Messages Error:", e.response?.data || e.message);

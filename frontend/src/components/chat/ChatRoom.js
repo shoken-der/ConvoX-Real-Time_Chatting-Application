@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { sendMessage, markMessageSeen, uploadFile } from "../../services/ChatService";
 import { useAuth } from "../../contexts/AuthContext";
 import useChat from "../../hooks/useChat";
@@ -65,7 +65,6 @@ export default function ChatRoom() {
     if (typingUser) {
       setDisplayTypingUser(typingUser);
     } else if (!isTyping) {
-      // Keep the user info for a moment so the 700ms animation can finish
       const timer = setTimeout(() => setDisplayTypingUser(null), 800);
       return () => clearTimeout(timer);
     }
@@ -75,9 +74,42 @@ export default function ChatRoom() {
   const scrollRef = useRef();
   const observer = useRef();
   const loadMoreObserver = useRef();
+  const isInitialScrollRef = useRef(true); // Track if this is the first scroll
 
-  // Mark last message as seen
-  const lastMessageRef = (node) => {
+  // Reset scroll flag when chat changes so new chats always scroll instantly
+  useEffect(() => {
+    isInitialScrollRef.current = true;
+    setReplyMessage(null);
+  }, [currentChat?.id]);
+
+  // Bulk-seen: When opening a chat, mark ALL unread messages from the other user as seen.
+  // This is far more reliable than relying solely on IntersectionObserver for the last message.
+  useEffect(() => {
+    if (!currentChat?.id || !currentUser?.id || messages.length === 0) return;
+
+    const unread = messages.filter(m => {
+      const senderId = m.sender?.id || m.senderId || m.sender;
+      const isFromOther = String(senderId) !== String(currentUser.id);
+      const isRealId = m.id && !String(m.id).startsWith("temp-");
+      const notSeenYet = !m.seenBy?.some(u => u.id === currentUser.id || String(u) === String(currentUser.id));
+      return isFromOther && isRealId && notSeenYet && !m.isDeleted;
+    });
+
+    if (unread.length === 0) return;
+
+    // Fire all seen requests in parallel — backend handles them idempotently
+    unread.forEach(m => {
+      markMessageSeen(m.id, currentUser.id)
+        .then(updatedMsg => updateLocalMessage(updatedMsg))
+        .catch(() => {}); // Silently ignore; will retry on next open
+    });
+  // Only run when messages array reference changes or chat changes, not on every render
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentChat?.id, messages.length]);
+
+  // lastMessageRef: Used as a fallback to mark the very last message seen
+  // in case bulk-seen misses it (e.g., it arrived after the bulk sweep)
+  const lastMessageRef = useCallback((node) => {
     if (observer.current) observer.current.disconnect();
     observer.current = new IntersectionObserver(async (entries) => {
       if (entries[0].isIntersecting) {
@@ -85,6 +117,7 @@ export default function ChatRoom() {
         if (
           lastMsg &&
           lastMsg.sender !== currentUser.id &&
+          !String(lastMsg.id || "").startsWith("temp-") &&
           !lastMsg.seenBy?.some((u) => u.id === currentUser.id)
         ) {
           try {
@@ -97,7 +130,7 @@ export default function ChatRoom() {
       }
     });
     if (node) observer.current.observe(node);
-  };
+  }, [messages, currentUser?.id, updateLocalMessage]);
 
   // Infinite scroll top
   const topRef = (node) => {
@@ -115,36 +148,38 @@ export default function ChatRoom() {
     const hasNewMessage = messages.length > prevMessagesLength.current;
     const typingStarted = isTyping && !prevIsTyping.current;
 
-    if ((hasNewMessage || typingStarted) && !loading && scrollRef.current) {
-      // Only scroll to bottom if it's a new message or someone started typing
-      scrollRef.current.scrollIntoView({ behavior: 'smooth' });
+    if (scrollRef.current) {
+      if (isInitialScrollRef.current && messages.length > 0 && !loading && !messagesLoading) {
+        // Initial load: instant scroll, no animation to avoid jank
+        scrollRef.current.scrollIntoView({ behavior: "instant" });
+        isInitialScrollRef.current = false;
+      } else if (hasNewMessage || typingStarted) {
+        // New message or typing: smooth scroll
+        scrollRef.current.scrollIntoView({ behavior: "smooth" });
+      }
     }
-    
+
     prevMessagesLength.current = messages.length;
     prevIsTyping.current = isTyping;
-  }, [messages.length, isTyping, loading]);
-
-  // Debugging logs
-  useEffect(() => {
-    if (currentChat) {
-
-    }
-  }, [currentChat]);
-
-  useEffect(() => {
-    if (messages) {
-
-    }
-  }, [messages]);
+  }, [messages.length, isTyping, loading, messagesLoading]);
 
   const handleFormSubmit = async (message, fileOrData = null) => {
     const receiverId = currentChat.members.find((m) => m.id !== currentUser.id)?.id;
     const content = (typeof message === "string" ? message : "") || "";
     const tempId = `temp-${Date.now()}`;
-    
+
     const isFile = fileOrData instanceof File;
-    // Local blob URL is ONLY for the sender's own optimistic UI — never sent over WebSocket
     const localImageUrl = isFile ? URL.createObjectURL(fileOrData) : (fileOrData?.url || null);
+
+    // Build a complete replyTo object — include id, imageUrl, fileType, senderName
+    // so the reply preview shows a thumbnail even during the optimistic phase
+    const replyToObj = replyMessage ? {
+      id: replyMessage.id || null,
+      content: replyMessage.content || replyMessage.message || null,
+      imageUrl: replyMessage.imageUrl || replyMessage.mediaUrl || null,
+      fileType: replyMessage.fileType || null,
+      senderName: replyMessage.senderName || null,
+    } : null;
 
     // 1. Create optimistic message for instant UI update (sender only)
     const optimisticMsg = {
@@ -154,7 +189,7 @@ export default function ChatRoom() {
       sender: currentUser.id,
       senderName: currentUser.displayName,
       content: content,
-      replyTo: replyMessage ? { content: replyMessage.content || replyMessage.message } : null,
+      replyTo: replyToObj,
       imageUrl: localImageUrl,
       fileType: isFile ? fileOrData.type : (fileOrData?.fileType || null),
       fileSize: isFile ? fileOrData.size : (fileOrData?.fileSize || 0),
@@ -165,13 +200,11 @@ export default function ChatRoom() {
       seenBy: []
     };
 
-    // 2. Add to UI immediately (Zero Latency for sender)
+    // 2. Add to UI immediately (zero latency for sender)
     addLocalMessage(optimisticMsg);
     setReplyMessage(null);
 
-    // 3. PHASE 1: Lightweight placeholder broadcast to receiver
-    //    IMPORTANT: Do NOT send blob URLs or large base64 data over WebSocket.
-    //    Send only the metadata so the receiver can show a "Receiving..." spinner.
+    // 3. Lightweight placeholder broadcast to receiver
     emit("sendMessage", {
       id: tempId,
       tempId: tempId,
@@ -179,12 +212,12 @@ export default function ChatRoom() {
       sender: currentUser.id,
       senderName: currentUser.displayName,
       content: content,
-      replyTo: replyMessage ? { content: replyMessage.content || replyMessage.message } : null,
+      replyTo: replyToObj,
       imageUrl: null,           // No image yet — receiver shows spinner
       fileType: isFile ? fileOrData.type : (fileOrData?.fileType || null),
       fileSize: isFile ? fileOrData.size : (fileOrData?.fileSize || 0),
       createdAt: new Date().toISOString(),
-      isUploading: isFile,      // Tells receiver to show loading indicator
+      isUploading: isFile,
       isOptimistic: true,
       reactions: [],
       seenBy: [],
@@ -205,18 +238,13 @@ export default function ChatRoom() {
         }
       }
 
-      // 5. Persist to DB — the backend's REST broadcast IS the Phase 2 delivery.
-      //    MessageController broadcasts the saved response (with real id + imageUrl)
-      //    to /topic/chat/{id} AND /topic/user/{receiverId} automatically.
-      //    The receiver's handleIncomingMessage will match on tempId and replace
-      //    the placeholder with the real image. No separate Phase 2 emit needed.
       const messageBody = {
         tempId: tempId,
         receiverId: receiverId,
         chatRoomId: currentChat.id,
         senderId: currentUser.id,
         content: content,
-        replyToId: replyMessage?.id || null,
+        replyToId: replyToObj?.id || null,
         imageUrl: finalFileData?.url || null,
         fileType: finalFileData?.fileType || null,
         fileSize: finalFileData?.fileSize || null,
@@ -224,7 +252,7 @@ export default function ChatRoom() {
 
       try {
         const res = await sendMessage(messageBody);
-        // Update sender's own optimistic message with the real persisted data
+        // Replace optimistic message with real confirmed data
         resolveOptimisticMessage(tempId, { ...res, imageUrl: res.imageUrl || localImageUrl });
       } catch (err) {
         console.error("Failed to persist message:", err);
@@ -264,7 +292,7 @@ export default function ChatRoom() {
   return (
     <div className="flex flex-col h-full w-full bg-[#0F1321] relative overflow-hidden">
       {/* Figma Spec Gradient Overlay */}
-      <div 
+      <div
         className="absolute inset-0 pointer-events-none z-0"
         style={{
           background: 'radial-gradient(60% 60% at 0% 0%, rgba(99, 91, 255, 0.08) 0%, rgba(15, 19, 33, 0) 100%)',
@@ -273,7 +301,7 @@ export default function ChatRoom() {
 
       <div className="flex-1 flex flex-col w-full h-full relative z-10 overflow-hidden">
         <ConnectionBanner connected={connected} />
-        
+
         <div className="w-full shrink-0 relative z-50">
           <ChatHeaderInfo chatRoom={currentChat} currentUser={currentUser} onlineUsersId={onlineUsersId} />
         </div>
@@ -288,7 +316,7 @@ export default function ChatRoom() {
                   <MessageSkeleton key={i} self={i % 2 === 0} />
                 ))}
               </div>
-            ) : !(loading || messagesLoading) && messages.length === 0 ? (
+            ) : !loading && !messagesLoading && messages.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-[50vh] gap-4 animate-zoom-in">
                 <div className="w-20 h-20 bg-surface rounded-full flex items-center justify-center shadow-premium border border-border/40">
                   <MessageSquare className="text-primary w-8 h-8 opacity-40" />
@@ -309,35 +337,33 @@ export default function ChatRoom() {
                     </div>
                   </div>
                 )}
-            {renderMessages()}
-                
-            {/* Typing Indicator — Positioned with clearance */}
-            <div className={`transition-all duration-700 cubic-bezier(0.4, 0, 0.2, 1) overflow-hidden ${isTyping ? "max-h-20 opacity-100 mt-2" : "max-h-0 opacity-0 pointer-events-none"}`}>
-              <div className={`flex items-center gap-2.5 mb-6 ${isTyping ? "animate-slide-up" : ""}`}>
-                 <div className="w-8 h-8 rounded-xl overflow-hidden flex-shrink-0 shadow-sm ring-2 ring-[#2A3245] ring-offset-2 ring-offset-[#0F1321] bg-[#2A3245]">
-                   <img 
-                     src={displayTypingUser?.photo || `https://ui-avatars.com/api/?name=${displayTypingUser?.name || 'User'}&background=635BFF&color=fff`} 
-                     alt="" 
-                     className="w-full h-full object-cover" 
-                   />
-                 </div>
-                 <div className="bg-[#1B1E2B]/80 backdrop-blur-sm text-[#F9FAFB] rounded-[18px] rounded-bl-[4px] px-4 py-2 flex items-center gap-2 border border-[#2A3245]/50 shadow-sm">
-                   <span className="text-[13px] font-medium">{displayTypingUser?.name || 'Someone'} is typing</span>
-                   <div className="flex gap-1">
-                     <span className="w-1.5 h-1.5 bg-[#635BFF] rounded-full animate-bounce [animation-duration:1s]" />
-                     <span className="w-1.5 h-1.5 bg-[#635BFF] rounded-full animate-bounce [animation-duration:1s] [animation-delay:0.2s]" />
-                     <span className="w-1.5 h-1.5 bg-[#635BFF] rounded-full animate-bounce [animation-duration:1s] [animation-delay:0.4s]" />
-                   </div>
-                 </div>
-              </div>
-            </div>
-          </>
-        )}
-      </div>
+                {renderMessages()}
+
+                {/* Typing Indicator */}
+                <div className={`transition-all duration-700 overflow-hidden ${isTyping ? "max-h-20 opacity-100 mt-2" : "max-h-0 opacity-0 pointer-events-none"}`}>
+                  <div className={`flex items-center gap-2.5 mb-6 ${isTyping ? "animate-slide-up" : ""}`}>
+                    <div className="w-8 h-8 rounded-xl overflow-hidden flex-shrink-0 shadow-sm ring-2 ring-[#2A3245] ring-offset-2 ring-offset-[#0F1321] bg-[#2A3245]">
+                      <img
+                        src={displayTypingUser?.photo || `https://ui-avatars.com/api/?name=${displayTypingUser?.name || 'User'}&background=635BFF&color=fff`}
+                        alt=""
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
+                    <div className="bg-[#1B1E2B]/80 backdrop-blur-sm text-[#F9FAFB] rounded-[18px] rounded-bl-[4px] px-4 py-2 flex items-center gap-2 border border-[#2A3245]/50 shadow-sm">
+                      <span className="text-[13px] font-medium">{displayTypingUser?.name || 'Someone'} is typing</span>
+                      <div className="flex gap-1">
+                        <span className="w-1.5 h-1.5 bg-[#635BFF] rounded-full animate-bounce [animation-duration:1s]" />
+                        <span className="w-1.5 h-1.5 bg-[#635BFF] rounded-full animate-bounce [animation-duration:1s] [animation-delay:0.2s]" />
+                        <span className="w-1.5 h-1.5 bg-[#635BFF] rounded-full animate-bounce [animation-duration:1s] [animation-delay:0.4s]" />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
           <div ref={scrollRef} className="h-1" />
         </div>
-
-        {/* Removed redundant typing indicator */}
 
         <div className="w-full shrink-0 relative z-50 bg-transparent px-3 lg:px-4 py-2.5 min-h-[76px] flex flex-col justify-center">
           <ChatForm

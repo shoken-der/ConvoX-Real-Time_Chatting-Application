@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { getAllUsers, getChatRooms, getMessagesOfChatRoom, markMessageSeen, baseURL } from "../services/ChatService";
+import { getChatRooms, getMessagesOfChatRoom, markMessageSeen, baseURL } from "../services/ChatService";
 import { useAuth } from "./AuthContext";
 import useSocket from "../hooks/useSocket";
 import axios from "axios";
@@ -14,7 +14,11 @@ export function ChatProvider({ children }) {
   });
   const [loading, setLoading] = useState(true);
   const [messagesLoading, setMessagesLoading] = useState(false);
-  const [hasInitiallyLoaded, setHasInitiallyLoaded] = useState(false);
+  const [hasInitiallyLoaded, setHasInitiallyLoaded] = useState(() => {
+    // If we have cached rooms, treat as initially loaded so we never show blank
+    const saved = localStorage.getItem("chatRooms");
+    return saved ? JSON.parse(saved).length > 0 : false;
+  });
   const [searchQuery, setSearchQuery] = useState("");
   const [currentChat, setCurrentChat] = useState(() => {
     const saved = sessionStorage.getItem("currentChat");
@@ -28,13 +32,16 @@ export function ChatProvider({ children }) {
   const [typingStatus, setTypingStatus] = useState({}); // { roomId: { name, photo, isTyping } }
   const [onlineUsersId, setOnlineUsersId] = useState([]);
   const [selectedImage, setSelectedImage] = useState(null);
+
+  // Refs to avoid stale closures
   const currentChatRef = useRef(null);
+  const fetchRequestIdRef = useRef(0); // Stale request guard
 
   useEffect(() => {
     currentChatRef.current = currentChat;
   }, [currentChat]);
 
-  // Use our new STOMP-based socket hook
+  // Use our STOMP-based socket hook
   const { socket, connected, emit, on, subscribe } = useSocket();
 
   // Persistence effects
@@ -54,15 +61,31 @@ export function ChatProvider({ children }) {
     }
   }, [currentChat]);
 
+  // fetchData: does NOT depend on currentChat — uses ref snapshot to avoid
+  // re-creating the callback (and re-triggering the effect) on every chat switch.
   const fetchData = useCallback(async () => {
     if (!currentUser?.id) return;
+
+    // Stale request guard: increment the request ID; if it changes by the time
+    // the response arrives, we know a newer request was issued and we discard this one.
+    const requestId = ++fetchRequestIdRef.current;
+
+    // Only show the skeleton if we have nothing cached yet
     if (!hasInitiallyLoaded && chatRooms.length === 0) setLoading(true);
+
     try {
       const rooms = await getChatRooms(currentUser.id);
+
+      // Discard stale responses
+      if (requestId !== fetchRequestIdRef.current) return;
+
       setChatRooms(rooms || []);
       setHasInitiallyLoaded(true);
-      if (currentChat) {
-        const stillExists = (rooms || []).some(r => r.id === currentChat.id);
+
+      // Use ref snapshot — avoids currentChat in deps
+      const activeChat = currentChatRef.current;
+      if (activeChat) {
+        const stillExists = (rooms || []).some(r => r.id === activeChat.id);
         if (!stillExists) {
           setCurrentChat(null);
         }
@@ -70,9 +93,12 @@ export function ChatProvider({ children }) {
     } catch (err) {
       console.error("ChatContext - Fetch failed:", err);
     } finally {
-      setLoading(false);
+      if (requestId === fetchRequestIdRef.current) {
+        setLoading(false);
+      }
     }
-  }, [currentUser?.id, currentChat, hasInitiallyLoaded]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.id]);
 
   useEffect(() => {
     if (currentUser?.id) {
@@ -86,7 +112,7 @@ export function ChatProvider({ children }) {
     try {
       const res = await getMessagesOfChatRoom(roomId, page, 50);
       const chronMessages = [...res].reverse();
-      
+
       if (page === 0) {
         setMessages(chronMessages);
         setMessageCache(prev => ({ ...prev, [roomId]: chronMessages }));
@@ -105,26 +131,27 @@ export function ChatProvider({ children }) {
 
   useEffect(() => {
     if (currentChat?.id) {
-      // Check cache first for instant load
+      // Show cached messages instantly, then fetch fresh data in background
       if (messageCache[currentChat.id]) {
         setMessages(messageCache[currentChat.id]);
       } else {
-        setMessages([]); // Only clear if not in cache
+        setMessages([]);
       }
       fetchMessages(currentChat.id, 0);
     } else {
       setMessages([]);
     }
-  }, [currentChat?.id]); // Note: removed fetchMessages from deps to avoid re-triggering if only callback identity changes
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentChat?.id]);
 
-  // Handle incoming data (Shared by both subscriptions)
+  // Handle incoming data (shared by both subscriptions)
   const handleIncomingMessage = useCallback((data) => {
     const activeChat = currentChatRef.current;
     const roomId = data.chatRoomId;
 
     if (!roomId) return;
 
-    // Helper to update a list of messages based on incoming event
+    // Helper to apply an update to a list of messages
     const updateMessageList = (prev) => {
       if (data.type === "REACTION") {
         return prev.map(m => m.id === data.messageId ? { ...m, reactions: data.reactions } : m);
@@ -133,19 +160,19 @@ export function ChatProvider({ children }) {
       } else if (data.type === "DELETE") {
         return prev.map(m => m.id === data.messageId ? { ...m, isDeleted: true, content: "This message was deleted", imageUrl: null } : m);
       } else if (data.type === "SEEN") {
-        return prev.map(m => m.id === data.messageId ? { 
-          ...m, 
-          ...data, 
-          id: data.messageId, 
+        return prev.map(m => m.id === data.messageId ? {
+          ...m,
+          ...data,
+          id: data.messageId,
           imageUrl: m.imageUrl || data.imageUrl,
-          fileType: m.fileType || data.fileType 
+          fileType: m.fileType || data.fileType
         } : m);
       } else if (!data.type) {
         const dataId = data.id ? String(data.id) : null;
         const dataTempId = data.tempId ? String(data.tempId) : null;
 
-        const matchIndex = prev.findIndex(m => 
-          (dataId && String(m.id) === dataId) || 
+        const matchIndex = prev.findIndex(m =>
+          (dataId && String(m.id) === dataId) ||
           (dataTempId && String(m.tempId) === dataTempId) ||
           (dataTempId && String(m.id) === dataTempId)
         );
@@ -158,10 +185,17 @@ export function ChatProvider({ children }) {
           newMsgs[matchIndex] = { ...existing, ...data, imageUrl: resolvedImageUrl, isUploading: resolvedIsUploading, isOptimistic: false };
           return newMsgs;
         }
-        
-        // Instant Seen: If this is a new message from the other person in the active chat, mark it as seen instantly
-        if (activeChat && String(roomId) === String(activeChat.id) && data.sender !== currentUser.id) {
-          markMessageSeen(data.id, currentUser.id);
+
+        // Instant Seen: If this is a new message from the other person in the active chat,
+        // mark it as seen — but ONLY if it has a real numeric ID (not a tempId from optimistic send)
+        const isRealId = data.id && !String(data.id).startsWith("temp-");
+        if (
+          activeChat &&
+          String(roomId) === String(activeChat.id) &&
+          data.sender !== currentUser.id &&
+          isRealId
+        ) {
+          markMessageSeen(data.id, currentUser.id).catch(() => {});
         }
 
         return [...prev, { ...data, isUploading: data.isUploading === true }];
@@ -169,12 +203,12 @@ export function ChatProvider({ children }) {
       return prev;
     };
 
-    // 1. Update current messages state if active
+    // 1. Update current messages state if this room is active
     if (activeChat && String(roomId) === String(activeChat.id)) {
       setMessages(prev => updateMessageList(prev));
     }
 
-    // 2. Update message cache for persistent storage
+    // 2. Update message cache for persistence
     setMessageCache(prevCache => {
       const roomMessages = prevCache[roomId] || [];
       return {
@@ -183,14 +217,14 @@ export function ChatProvider({ children }) {
       };
     });
 
-    // 3. Update Sidebar (Chat Rooms)
+    // 3. Update sidebar chat room preview
     if (!data.type || data.type === "EDIT" || data.type === "DELETE") {
       setChatRooms(prevRooms => {
         const roomExists = prevRooms.some(r => r.id === roomId);
         if (roomExists) {
           return prevRooms.map(room => {
             if (room.id === roomId) {
-              const isCurrentlyActive = activeChat?.id === room.id;
+              const isCurrentlyActive = currentChatRef.current?.id === room.id;
               return {
                 ...room,
                 lastMessage: data,
@@ -206,16 +240,25 @@ export function ChatProvider({ children }) {
         }
       });
     }
-  }, [fetchData]);
+  }, [fetchData, currentUser?.id]);
+
+  // Update typing status — called by useMessages to thread typing state up to context
+  // (used by Contact.js sidebar "Typing..." label)
+  const updateTypingStatus = useCallback((roomId, typingInfo) => {
+    setTypingStatus(prev => ({
+      ...prev,
+      [roomId]: typingInfo
+    }));
+  }, []);
 
   // PERMANENT USER SUBSCRIPTION: Never restarts on chat change
   useEffect(() => {
     if (!socket?.current?.connected || !currentUser?.id) return;
-    
+
     const userSub = socket.current.subscribe(`/topic/user/${currentUser.id}`, (frame) => {
       handleIncomingMessage(JSON.parse(frame.body));
     });
-    
+
     const presenceSub = socket.current.subscribe("/topic/presence", (frame) => {
       const data = JSON.parse(frame.body);
       setOnlineUsersId(prev => {
@@ -226,13 +269,13 @@ export function ChatProvider({ children }) {
           return prev.filter(id => String(id) !== String(data.userId));
         }
       });
-      
+
       // Update lastSeen in chatRooms members so headers stay fresh
       setChatRooms(prevRooms => prevRooms.map(room => ({
         ...room,
-        members: room.members.map(m => 
-          String(m.id) === String(data.userId) 
-            ? { ...m, lastSeen: data.lastSeen || new Date().toISOString() } 
+        members: room.members.map(m =>
+          String(m.id) === String(data.userId)
+            ? { ...m, lastSeen: data.lastSeen || new Date().toISOString() }
             : m
         )
       })));
@@ -243,60 +286,34 @@ export function ChatProvider({ children }) {
       try { presenceSub.unsubscribe(); } catch (e) {}
     };
   }, [socket, currentUser?.id, connected, handleIncomingMessage]);
+
   // ROOM-SPECIFIC SUBSCRIPTION: Restarts ONLY when chat changes
+  // NOTE: Typing subscription intentionally removed from here — handled by useMessages
+  // to prevent duplicate callbacks. useMessages threads typing state back up via updateTypingStatus.
   useEffect(() => {
     if (!socket?.current?.connected || !currentChat?.id) return;
-    
+
     const roomSub = socket.current.subscribe(`/topic/chat/${currentChat.id}`, (frame) => {
       handleIncomingMessage(JSON.parse(frame.body));
     });
 
-    // Global Typing Subscription for the active chat
-    const typingSub = socket.current.subscribe(`/topic/chat/${currentChat.id}/typing`, (frame) => {
-      const data = JSON.parse(frame.body);
-      if (String(data.senderId) === String(currentUser.id)) return;
-
-      const roomId = data.chatRoomId;
-      setTypingStatus(prev => ({
-        ...prev,
-        [roomId]: {
-          name: data.senderName || "Someone",
-          photo: data.senderPhoto,
-          isTyping: data.typing !== false
-        }
-      }));
-
-      // Auto-clear typing status after 4 seconds
-      if (data.typing !== false) {
-        setTimeout(() => {
-          setTypingStatus(prev => {
-            if (prev[roomId]) return { ...prev, [roomId]: { ...prev[roomId], isTyping: false } };
-            return prev;
-          });
-        }, 4000);
-      }
-    });
-
     return () => {
       try { roomSub.unsubscribe(); } catch (e) {}
-      try { typingSub.unsubscribe(); } catch (e) {}
     };
-  }, [socket, currentChat?.id, connected, handleIncomingMessage, currentUser?.id]);
+  }, [socket, currentChat?.id, connected, handleIncomingMessage]);
 
   // Initial fetch for online users
   useEffect(() => {
     if (connected && currentUser?.id) {
-       // Small delay to ensure backend has processed the connection and markOnline
-       setTimeout(() => {
-         axios.get(`${baseURL}/presence/online`, {
-           headers: { Authorization: `Bearer ${localStorage.getItem("token")}` }
-         }).then(res => {
-           setOnlineUsersId(res.data || []);
-         }).catch(() => {});
-       }, 500);
+      setTimeout(() => {
+        axios.get(`${baseURL}/presence/online`, {
+          headers: { Authorization: `Bearer ${localStorage.getItem("token")}` }
+        }).then(res => {
+          setOnlineUsersId(res.data || []);
+        }).catch(() => {});
+      }, 500);
     }
   }, [connected, currentUser?.id]);
-
 
   const filteredRooms = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -316,11 +333,9 @@ export function ChatProvider({ children }) {
     return [...filteredRooms].sort((a, b) => {
       const aTime = new Date(a.lastMessage?.createdAt || a.updatedAt || a.createdAt || 0).getTime();
       const bTime = new Date(b.lastMessage?.createdAt || b.updatedAt || b.createdAt || 0).getTime();
-      
-      // WhatsApp style: Newest first
       return (isNaN(bTime) ? 0 : bTime) - (isNaN(aTime) ? 0 : aTime);
     });
-  }, [filteredRooms, onlineUsersId, currentUser?.id]);
+  }, [filteredRooms]);
 
   const updateChatRooms = useCallback((newRooms) => {
     setChatRooms(newRooms);
@@ -339,11 +354,14 @@ export function ChatProvider({ children }) {
     onlineUsersId,
     setOnlineUsersId,
     typingStatus,
+    updateTypingStatus,
     selectedImage,
     setSelectedImage,
     messages,
     setMessages,
     messagesLoading,
+    messageCache,
+    setMessageCache,
     updateChatRooms,
     refresh: fetchData,
     socket,

@@ -1,8 +1,8 @@
-import { useState, useRef, useEffect, useMemo, memo } from "react";
-import { 
-  Reply, 
-  Trash2, 
-  Smile, 
+import { useState, useRef, useEffect, useMemo, memo, useCallback } from "react";
+import {
+  Reply,
+  Trash2,
+  Smile,
   Download,
   FileText,
   Check,
@@ -18,7 +18,14 @@ const Message = memo(({ message, self, senderUser, onReply, socket, receiverId, 
   const [isEditing, setIsEditing] = useState(false);
   const [editText, setEditText] = useState(message.message || "");
   const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
+  // Local optimistic reactions — allows immediate visual feedback before API response
+  const [localReactions, setLocalReactions] = useState(message.reactions || []);
   const editInputRef = useRef();
+
+  // Keep localReactions in sync when the message reactions prop updates from WebSocket
+  useEffect(() => {
+    setLocalReactions(message.reactions || []);
+  }, [message.reactions]);
 
   useEffect(() => {
     if (isEditing && editInputRef.current) {
@@ -26,10 +33,32 @@ const Message = memo(({ message, self, senderUser, onReply, socket, receiverId, 
     }
   }, [isEditing]);
 
-  const handleReaction = async (emoji) => {
+  const handleReaction = useCallback(async (emoji) => {
+    setShowReactions(false);
+
+    // --- Optimistic update ---
+    // Determine if the user is adding, changing, or removing a reaction
+    const currentReaction = localReactions.find(r => String(r.userId) === String(self));
+    let nextReactions;
+
+    if (!currentReaction) {
+      // No existing reaction → add new
+      nextReactions = [...localReactions, { userId: self, emoji }];
+    } else if (currentReaction.emoji === emoji) {
+      // Same emoji → remove (toggle off)
+      nextReactions = localReactions.filter(r => String(r.userId) !== String(self));
+    } else {
+      // Different emoji → replace
+      nextReactions = localReactions.map(r => String(r.userId) === String(self) ? { ...r, emoji } : r);
+    }
+
+    setLocalReactions(nextReactions);
+    // --- End optimistic update ---
+
     try {
       const res = await toggleReaction(message.id, { userId: self, emoji });
       if (res && res.reactions !== undefined) {
+        setLocalReactions(res.reactions);
         onMessageUpdated && onMessageUpdated(res);
         // Broadcast reaction update to other user via STOMP
         if (socket?.current?.connected) {
@@ -44,21 +73,22 @@ const Message = memo(({ message, self, senderUser, onReply, socket, receiverId, 
           });
         }
       }
-      setShowReactions(false);
     } catch (err) {
       console.error("Error toggling reaction:", err);
+      // Roll back optimistic update on failure
+      setLocalReactions(message.reactions || []);
     }
-  };
+  }, [localReactions, self, message, socket, onMessageUpdated]);
 
   const handleDelete = async () => {
     // Optimistic update: show "This message was deleted" instantly
-    onMessageUpdated && onMessageUpdated({ 
+    onMessageUpdated && onMessageUpdated({
       ...message,
-      isDeleted: true, 
+      isDeleted: true,
       content: isSelf ? "You deleted this message" : "This message was deleted",
-      imageUrl: null 
+      imageUrl: null
     });
-    
+
     try {
       await deleteMessage(message.id, self);
       // Broadcast delete event to other user via STOMP
@@ -105,13 +135,14 @@ const Message = memo(({ message, self, senderUser, onReply, socket, receiverId, 
     setIsSubmittingEdit(false);
   };
 
+  // Group reactions from localReactions for display
   const groupedReactions = useMemo(() => {
-    return message.reactions?.reduce((acc, r) => {
+    return localReactions?.reduce((acc, r) => {
       if (!acc[r.emoji]) acc[r.emoji] = [];
       acc[r.emoji].push(r.userId);
       return acc;
     }, {}) || {};
-  }, [message.reactions]);
+  }, [localReactions]);
 
   const text =
     message.content ||
@@ -127,12 +158,9 @@ const Message = memo(({ message, self, senderUser, onReply, socket, receiverId, 
     "";
 
   const renderFile = () => {
-    // Show spinner if we're explicitly uploading/receiving,
-    // even if imageUrl hasn't arrived yet.
     const isReceivingFile = message.isUploading === true || message.isUploading === "true";
 
     if (isReceivingFile && !imageUrl) {
-      // Phase 1: receiver is waiting for the real image
       return (
         <div
           className={`relative rounded-xl overflow-hidden ${isSelf ? 'border border-[#635BFF]/30' : 'border border-[#2A3245]'} ${text ? "mb-1.5" : ""}`}
@@ -147,13 +175,12 @@ const Message = memo(({ message, self, senderUser, onReply, socket, receiverId, 
 
     if (!imageUrl || isDeleted) return null;
 
-    const isImage = message.fileType?.startsWith("image/") || 
+    const isImage = message.fileType?.startsWith("image/") ||
                     imageUrl.startsWith("data:image/") ||
                     imageUrl.match(/\.(jpeg|jpg|gif|png|webp)$/i) ||
                     imageUrl.includes("picsum.photos");
 
     if (isImage) {
-      // Only show spinner for sender's own upload still in progress
       const isLoading = isSelf && message.isUploading;
 
       return (
@@ -175,19 +202,20 @@ const Message = memo(({ message, self, senderUser, onReply, socket, receiverId, 
               alt="Shared media"
               className="w-full max-w-[220px] object-cover transition-transform duration-500 group-hover/img:scale-105"
               onError={(e) => {
-                 e.target.src = "https://via.placeholder.com/400?text=Image+Load+Error";
+                e.target.src = "https://via.placeholder.com/400?text=Image+Load+Error";
               }}
             />
           )}
+          {/* Time + Seen tick overlay on images */}
           <div className="absolute bottom-2 right-2 bg-[#0B0C10]/70 backdrop-blur-md px-2 py-1 rounded-lg flex items-center gap-1">
-             <span className="text-[10px] text-[#F9FAFB] font-medium">
-               {message.createdAt ? new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ""}
-             </span>
-             {isSelf && (
-               <div className="flex ml-0.5 text-[#635BFF]">
-                 {message.seenBy?.length > 0 ? <CheckCheck size={12} /> : <Check size={12} />}
-               </div>
-             )}
+            <span className="text-[10px] text-[#F9FAFB] font-medium">
+              {message.createdAt ? new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ""}
+            </span>
+            {isSelf && (
+              <div className="flex ml-0.5 text-[#635BFF]">
+                {message.seenBy?.length > 0 ? <CheckCheck size={12} /> : <Check size={12} />}
+              </div>
+            )}
           </div>
           {!isLoading && <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/10 transition-colors duration-300" />}
         </div>
@@ -210,44 +238,59 @@ const Message = memo(({ message, self, senderUser, onReply, socket, receiverId, 
     );
   };
 
-    const isImageOnly = imageUrl && !text && !isDeleted;
+  const isImageOnly = imageUrl && !text && !isDeleted;
+
+  // Reply preview: show sender name for context, show thumbnail if available
+  const renderReplyPreview = () => {
+    if (!message.replyTo || isDeleted) return null;
+    const replyImageUrl = message.replyTo.imageUrl || message.replyTo.mediaUrl || null;
+    const replyText = message.replyTo.content || message.replyTo.message || null;
+    const replySenderName = message.replyTo.senderName || null;
 
     return (
+      <div className={`mb-2 p-2 rounded-xl text-[12px] border-l-4 flex items-center justify-between gap-3 ${isSelf ? "bg-white/10 border-white/40 text-white/90" : "bg-surface border-primary/30 text-text-secondary"}`}>
+        <div className="flex-1 min-w-0">
+          {replySenderName && (
+            <p className="truncate font-bold text-[11px] mb-0.5 text-primary">{replySenderName}</p>
+          )}
+          {!replySenderName && (
+            <p className="truncate font-semibold mb-0.5 opacity-70">Replying to</p>
+          )}
+          <p className="truncate italic font-medium">
+            {replyImageUrl && !replyText ? "📷 Photo" : (replyText || "Message")}
+          </p>
+        </div>
+        {replyImageUrl && (
+          <div className="w-10 h-10 rounded-lg overflow-hidden shrink-0 border border-white/5 shadow-sm">
+            <img src={replyImageUrl} alt="Reply preview" className="w-full h-full object-cover" />
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return (
     <div className={`flex flex-col ${isSelf ? "items-end" : "items-start"} mb-4 group/msg w-full animate-fade-in`}>
       <div className={`flex items-end gap-2.5 w-full max-w-[65%] ${isSelf ? "justify-end" : "justify-start"} relative`}>
         {!isSelf && (
-           <div className="w-8 h-8 rounded-xl overflow-hidden mb-1 flex-shrink-0 shadow-sm ring-2 ring-[#2A3245] ring-offset-2 ring-offset-[#0F1321] bg-[#2A3245] animate-pulse">
-             <img src={senderUser?.photoUrl || `https://ui-avatars.com/api/?name=${message.senderName || senderUser?.displayName || 'User'}&background=635BFF&color=fff`} alt="" className="w-full h-full object-cover" onLoad={(e) => e.target.parentElement.classList.remove('animate-pulse')} />
-           </div>
+          <div className="w-8 h-8 rounded-xl overflow-hidden mb-1 flex-shrink-0 shadow-sm ring-2 ring-[#2A3245] ring-offset-2 ring-offset-[#0F1321] bg-[#2A3245] animate-pulse">
+            <img src={senderUser?.photoUrl || `https://ui-avatars.com/api/?name=${message.senderName || senderUser?.displayName || 'User'}&background=635BFF&color=fff`} alt="" className="w-full h-full object-cover" onLoad={(e) => e.target.parentElement.classList.remove('animate-pulse')} />
+          </div>
         )}
-        
+
         <div className="relative group/bubble">
           <div
             className={`
               transition-all duration-300
               ${isImageOnly ? "p-0 bg-transparent" : "px-3 py-2"}
-              ${isSelf 
-                ? (isImageOnly ? "" : "bg-gradient-to-br from-[#635BFF] to-[#6B4FFF] text-white rounded-[16px] rounded-br-[4px] shadow-sm shadow-[#635BFF]/10") 
+              ${isSelf
+                ? (isImageOnly ? "" : "bg-gradient-to-br from-[#635BFF] to-[#6B4FFF] text-white rounded-[16px] rounded-br-[4px] shadow-sm shadow-[#635BFF]/10")
                 : (isImageOnly ? "" : "bg-[#1F2937] border border-[#2A3245] text-[#F9FAFB] rounded-[16px] rounded-bl-[4px]")
               }
               ${isDeleted ? "opacity-50 italic text-sm" : ""}
             `}
           >
-            {message.replyTo && !isDeleted && (
-              <div className={`mb-2 p-2 rounded-xl text-[12px] border-l-4 flex items-center justify-between gap-3 ${isSelf ? "bg-white/10 border-white/40 text-white/90" : "bg-surface border-primary/30 text-text-secondary"}`}>
-                <div className="flex-1 min-w-0">
-                  <p className="truncate font-semibold mb-0.5 opacity-70">Replying to</p>
-                  <p className="truncate italic font-medium">
-                    {message.replyTo.imageUrl && !message.replyTo.content ? "📷 Photo" : (message.replyTo.content || message.replyTo.message)}
-                  </p>
-                </div>
-                {message.replyTo.imageUrl && (
-                  <div className="w-10 h-10 rounded-lg overflow-hidden shrink-0 border border-white/5 shadow-sm">
-                    <img src={message.replyTo.imageUrl} alt="Reply preview" className="w-full h-full object-cover" />
-                  </div>
-                )}
-              </div>
-            )}
+            {renderReplyPreview()}
 
             {renderFile()}
 
@@ -273,20 +316,20 @@ const Message = memo(({ message, self, senderUser, onReply, socket, receiverId, 
                 {text && (
                   <div className="flex items-end justify-between gap-3 min-w-[60px]">
                     <p className="text-[14px] leading-relaxed break-words whitespace-pre-wrap">
-                      {isDeleted 
-                        ? (isSelf ? "You deleted this message" : "This message was deleted") 
+                      {isDeleted
+                        ? (isSelf ? "You deleted this message" : "This message was deleted")
                         : text}
                     </p>
                     <div className={`flex items-center gap-1 shrink-0 relative top-1 ${isSelf ? "text-white/80" : "text-[#6B7280]"}`}>
-                       {message.isEdited && <span className="text-[9px] italic mr-0.5">Edited</span>}
-                       <span className="text-[10px] font-medium">
-                         {message.createdAt && !isNaN(new Date(message.createdAt).getTime()) ? new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ""}
-                       </span>
-                       {isSelf && (
-                         <div className="flex ml-0.5">
-                           {message.seenBy?.length > 0 ? <CheckCheck size={12} /> : <Check size={12} />}
-                         </div>
-                       )}
+                      {message.isEdited && <span className="text-[9px] italic mr-0.5">Edited</span>}
+                      <span className="text-[10px] font-medium">
+                        {message.createdAt && !isNaN(new Date(message.createdAt).getTime()) ? new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ""}
+                      </span>
+                      {isSelf && (
+                        <div className="flex ml-0.5">
+                          {message.seenBy?.length > 0 ? <CheckCheck size={12} /> : <Check size={12} />}
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
@@ -298,7 +341,7 @@ const Message = memo(({ message, self, senderUser, onReply, socket, receiverId, 
           {!isDeleted && (
             <div className={`absolute top-0 opacity-0 group-hover/bubble:opacity-100 transition-all duration-200 flex items-center gap-1 ${isSelf ? "right-full mr-3" : "left-full ml-3"}`}>
               <button onClick={onReply} className="p-2 rounded-xl hover:bg-surface-elevated text-text-muted hover:text-text-main transition-colors shadow-sm bg-surface border border-border/40"><Reply size={16} /></button>
-              
+
               <div className="relative">
                 <button onClick={() => setShowReactions(!showReactions)} className="p-2 rounded-xl hover:bg-surface-elevated text-text-muted hover:text-text-main transition-colors shadow-sm bg-surface border border-border/40"><Smile size={16} /></button>
                 {showReactions && (
@@ -324,7 +367,7 @@ const Message = memo(({ message, self, senderUser, onReply, socket, receiverId, 
             </div>
           )}
 
-          {/* Reactions */}
+          {/* Reactions display */}
           {Object.keys(groupedReactions).length > 0 && !isDeleted && (
             <div className={`absolute -bottom-2.5 flex gap-1 bg-surface-elevated border border-border/50 rounded-full px-2 py-1 shadow-premium ${isSelf ? "right-4" : "left-4"}`}>
               {Object.entries(groupedReactions).map(([emoji, users]) => (
