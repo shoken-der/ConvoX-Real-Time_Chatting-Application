@@ -65,7 +65,7 @@ public class AuthServiceImpl implements AuthService {
 
     private void saveOtp(String email, String code, String tempPassword) {
         // Find existing or create new
-        OtpCode otpCode = otpCodeRepository.findByEmail(email)
+        OtpCode otpCode = otpCodeRepository.findTopByEmailOrderByCreatedAtDesc(email)
                 .orElse(new OtpCode());
         
         otpCode.setEmail(email);
