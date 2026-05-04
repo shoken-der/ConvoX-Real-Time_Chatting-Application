@@ -67,6 +67,13 @@ public class MessageController {
     public ResponseEntity<MessageResponse> markSeen(
             @PathVariable Long messageId, @RequestBody Map<String, Object> payload) {
         Long userId = Long.valueOf(payload.get("userId").toString());
-        return ResponseEntity.ok(messageService.markMessageSeen(messageId, userId));
+        MessageResponse response = messageService.markMessageSeen(messageId, userId);
+        
+        // Broadcast seen status
+        response.setType("SEEN");
+        response.setMessageId(messageId);
+        messagingTemplate.convertAndSend("/topic/chat/" + response.getChatRoomId(), response);
+        
+        return ResponseEntity.ok(response);
     }
 }

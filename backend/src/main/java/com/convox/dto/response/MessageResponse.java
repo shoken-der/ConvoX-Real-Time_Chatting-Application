@@ -30,4 +30,8 @@ public class MessageResponse {
     
     private LocalDateTime createdAt;
     private Set<ReactionResponse> reactions;
+    
+    // For WebSocket events
+    private String type;
+    private Long messageId;
 }

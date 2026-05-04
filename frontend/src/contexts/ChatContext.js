@@ -15,6 +15,7 @@ export function ChatProvider({ children }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [currentChat, setCurrentChat] = useState(null);
   const [messages, setMessages] = useState([]);
+  const [messageCache, setMessageCache] = useState({}); // { roomId: messages[] }
   const [onlineUsersId, setOnlineUsersId] = useState([]);
   const [selectedImage, setSelectedImage] = useState(null);
   const currentChatRef = useRef(null);
@@ -74,10 +75,16 @@ export function ChatProvider({ children }) {
     try {
       const res = await getMessagesOfChatRoom(roomId, page, 50);
       const chronMessages = [...res].reverse();
+      
       if (page === 0) {
         setMessages(chronMessages);
+        setMessageCache(prev => ({ ...prev, [roomId]: chronMessages }));
       } else {
-        setMessages(prev => [...chronMessages, ...prev]);
+        setMessages(prev => {
+          const updated = [...chronMessages, ...prev];
+          setMessageCache(cache => ({ ...cache, [roomId]: updated }));
+          return updated;
+        });
       }
       return res;
     } catch (err) {
@@ -88,80 +95,85 @@ export function ChatProvider({ children }) {
 
   useEffect(() => {
     if (currentChat?.id) {
+      // Check cache first for instant load
+      if (messageCache[currentChat.id]) {
+        setMessages(messageCache[currentChat.id]);
+      } else {
+        setMessages([]); // Only clear if not in cache
+      }
       fetchMessages(currentChat.id, 0);
     } else {
       setMessages([]);
     }
-  }, [currentChat?.id, fetchMessages]);
+  }, [currentChat?.id]); // Note: removed fetchMessages from deps to avoid re-triggering if only callback identity changes
 
   // Handle incoming data (Shared by both subscriptions)
   const handleIncomingMessage = useCallback((data) => {
     const activeChat = currentChatRef.current;
+    const roomId = data.chatRoomId;
 
-    // 1. Update Messages if it's the current chat
-    if (activeChat && String(data.chatRoomId) === String(activeChat.id)) {
-      setMessages(prev => {
-        if (data.type === "REACTION") {
-          return prev.map(m => m.id === data.messageId ? { ...m, reactions: data.reactions } : m);
-        } else if (data.type === "EDIT") {
-          return prev.map(m => m.id === data.messageId ? { ...m, ...data, id: data.messageId, imageUrl: m.imageUrl || data.imageUrl } : m);
-        } else if (data.type === "DELETE") {
-          return prev.map(m => m.id === data.messageId ? { ...m, isDeleted: true, content: "This message was deleted", imageUrl: null } : m);
-        } else if (data.type === "SEEN") {
-          return prev.map(m => m.id === data.messageId ? { 
-            ...m, 
-            ...data, 
-            id: data.messageId, 
-            imageUrl: m.imageUrl || data.imageUrl,
-            fileType: m.fileType || data.fileType 
-          } : m);
-        } else if (!data.type) {
-          const dataId = data.id ? String(data.id) : null;
-          const dataTempId = data.tempId ? String(data.tempId) : null;
+    if (!roomId) return;
 
-          const matchIndex = prev.findIndex(m => 
-            (dataId && String(m.id) === dataId) || 
-            (dataTempId && String(m.tempId) === dataTempId) ||
-            (dataTempId && String(m.id) === dataTempId)
-          );
+    // Helper to update a list of messages based on incoming event
+    const updateMessageList = (prev) => {
+      if (data.type === "REACTION") {
+        return prev.map(m => m.id === data.messageId ? { ...m, reactions: data.reactions } : m);
+      } else if (data.type === "EDIT") {
+        return prev.map(m => m.id === data.messageId ? { ...m, ...data, id: data.messageId, imageUrl: m.imageUrl || data.imageUrl } : m);
+      } else if (data.type === "DELETE") {
+        return prev.map(m => m.id === data.messageId ? { ...m, isDeleted: true, content: "This message was deleted", imageUrl: null } : m);
+      } else if (data.type === "SEEN") {
+        return prev.map(m => m.id === data.messageId ? { 
+          ...m, 
+          ...data, 
+          id: data.messageId, 
+          imageUrl: m.imageUrl || data.imageUrl,
+          fileType: m.fileType || data.fileType 
+        } : m);
+      } else if (!data.type) {
+        const dataId = data.id ? String(data.id) : null;
+        const dataTempId = data.tempId ? String(data.tempId) : null;
 
-          if (matchIndex !== -1) {
-            const newMsgs = [...prev];
-            const existing = newMsgs[matchIndex];
-            // If incoming data has a real image URL, always use it.
-            // If incoming data has no image URL, preserve whatever we already have.
-            const resolvedImageUrl = data.imageUrl || existing.imageUrl || null;
-            // Stop the loading spinner only when we have a real (non-null) imageUrl
-            // OR when the sender explicitly marks isUploading as false.
-            const resolvedIsUploading = resolvedImageUrl
-              ? false
-              : (data.isUploading !== undefined ? data.isUploading : existing.isUploading);
-            newMsgs[matchIndex] = { 
-              ...existing, 
-              ...data, 
-              imageUrl: resolvedImageUrl,
-              isUploading: resolvedIsUploading,
-              isOptimistic: false 
-            };
-            return newMsgs;
-          }
-          // New message from receiver's perspective: preserve isUploading from sender's signal
-          return [...prev, { 
-            ...data, 
-            isUploading: data.isUploading === true ? true : false 
-          }];
+        const matchIndex = prev.findIndex(m => 
+          (dataId && String(m.id) === dataId) || 
+          (dataTempId && String(m.tempId) === dataTempId) ||
+          (dataTempId && String(m.id) === dataTempId)
+        );
+
+        if (matchIndex !== -1) {
+          const newMsgs = [...prev];
+          const existing = newMsgs[matchIndex];
+          const resolvedImageUrl = data.imageUrl || existing.imageUrl || null;
+          const resolvedIsUploading = resolvedImageUrl ? false : (data.isUploading !== undefined ? data.isUploading : existing.isUploading);
+          newMsgs[matchIndex] = { ...existing, ...data, imageUrl: resolvedImageUrl, isUploading: resolvedIsUploading, isOptimistic: false };
+          return newMsgs;
         }
-        return prev;
-      });
+        return [...prev, { ...data, isUploading: data.isUploading === true }];
+      }
+      return prev;
+    };
+
+    // 1. Update current messages state if active
+    if (activeChat && String(roomId) === String(activeChat.id)) {
+      setMessages(prev => updateMessageList(prev));
     }
 
-    // 2. Update Sidebar (Chat Rooms) - Only for new messages or edits
+    // 2. Update message cache for persistent storage
+    setMessageCache(prevCache => {
+      const roomMessages = prevCache[roomId] || [];
+      return {
+        ...prevCache,
+        [roomId]: updateMessageList(roomMessages)
+      };
+    });
+
+    // 3. Update Sidebar (Chat Rooms)
     if (!data.type || data.type === "EDIT" || data.type === "DELETE") {
       setChatRooms(prevRooms => {
-        const roomExists = prevRooms.some(r => r.id === data.chatRoomId);
+        const roomExists = prevRooms.some(r => r.id === roomId);
         if (roomExists) {
           return prevRooms.map(room => {
-            if (room.id === data.chatRoomId) {
+            if (room.id === roomId) {
               const isCurrentlyActive = activeChat?.id === room.id;
               return {
                 ...room,
