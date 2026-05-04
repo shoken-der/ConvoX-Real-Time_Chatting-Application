@@ -35,7 +35,7 @@ export default function Register() {
       await register(email, password);
       navigate("/verify-email", { state: { email, password } });
     } catch (e) {
-      setError(e.message || "Failed to create an account.");
+      setError(e.response?.data?.message || e.message || "Failed to create an account.");
     }
     setLoading(false);
   }

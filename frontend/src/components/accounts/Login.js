@@ -29,7 +29,7 @@ export default function Login() {
       await login(email, password);
       // AuthContext updates currentUser, useEffect handles redirect
     } catch (e) {
-      setError(e.message || "Failed to login. Please check your credentials.");
+      setError(e.response?.data?.message || e.message || "Failed to login. Please check your credentials.");
     }
     setLoading(false);
   }
