@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { getAllUsers, getChatRooms, getMessagesOfChatRoom, baseURL } from "../services/ChatService";
+import { getAllUsers, getChatRooms, getMessagesOfChatRoom, markMessageSeen, baseURL } from "../services/ChatService";
 import { useAuth } from "./AuthContext";
 import useSocket from "../hooks/useSocket";
 import axios from "axios";
@@ -16,6 +16,7 @@ export function ChatProvider({ children }) {
   const [currentChat, setCurrentChat] = useState(null);
   const [messages, setMessages] = useState([]);
   const [messageCache, setMessageCache] = useState({}); // { roomId: messages[] }
+  const [typingStatus, setTypingStatus] = useState({}); // { roomId: { name, photo, isTyping } }
   const [onlineUsersId, setOnlineUsersId] = useState([]);
   const [selectedImage, setSelectedImage] = useState(null);
   const currentChatRef = useRef(null);
@@ -148,6 +149,12 @@ export function ChatProvider({ children }) {
           newMsgs[matchIndex] = { ...existing, ...data, imageUrl: resolvedImageUrl, isUploading: resolvedIsUploading, isOptimistic: false };
           return newMsgs;
         }
+        
+        // Instant Seen: If this is a new message from the other person in the active chat, mark it as seen instantly
+        if (activeChat && String(roomId) === String(activeChat.id) && data.sender !== currentUser.id) {
+          markMessageSeen(data.id, currentUser.id);
+        }
+
         return [...prev, { ...data, isUploading: data.isUploading === true }];
       }
       return prev;
@@ -210,6 +217,16 @@ export function ChatProvider({ children }) {
           return prev.filter(id => String(id) !== String(data.userId));
         }
       });
+      
+      // Update lastSeen in chatRooms members so headers stay fresh
+      setChatRooms(prevRooms => prevRooms.map(room => ({
+        ...room,
+        members: room.members.map(m => 
+          String(m.id) === String(data.userId) 
+            ? { ...m, lastSeen: data.lastSeen || new Date().toISOString() } 
+            : m
+        )
+      })));
     });
 
     return () => {
@@ -218,27 +235,53 @@ export function ChatProvider({ children }) {
     };
   }, [socket, currentUser?.id, connected, handleIncomingMessage]);
 
-  // ROOM-SPECIFIC SUBSCRIPTION: Restarts ONLY when chat changes
-  useEffect(() => {
-    if (!socket?.current?.connected || !currentChat?.id) return;
-    
     const roomSub = socket.current.subscribe(`/topic/chat/${currentChat.id}`, (frame) => {
       handleIncomingMessage(JSON.parse(frame.body));
     });
 
+    // Global Typing Subscription for the active chat
+    const typingSub = socket.current.subscribe(`/topic/chat/${currentChat.id}/typing`, (frame) => {
+      const data = JSON.parse(frame.body);
+      if (String(data.senderId) === String(currentUser.id)) return;
+
+      const roomId = data.chatRoomId;
+      setTypingStatus(prev => ({
+        ...prev,
+        [roomId]: {
+          name: data.senderName || "Someone",
+          photo: data.senderPhoto,
+          isTyping: data.typing !== false
+        }
+      }));
+
+      // Auto-clear typing status after 4 seconds
+      if (data.typing !== false) {
+        setTimeout(() => {
+          setTypingStatus(prev => {
+            if (prev[roomId]) return { ...prev, [roomId]: { ...prev[roomId], isTyping: false } };
+            return prev;
+          });
+        }, 4000);
+      }
+    });
+
     return () => {
       try { roomSub.unsubscribe(); } catch (e) {}
+      try { typingSub.unsubscribe(); } catch (e) {}
     };
-  }, [socket, currentChat?.id, connected, handleIncomingMessage]);
+  }, [socket, currentChat?.id, connected, handleIncomingMessage, currentUser?.id]);
 
   // Initial fetch for online users
   useEffect(() => {
     if (connected && currentUser?.id) {
-       axios.get(`${baseURL}/presence/online`, {
-         headers: { Authorization: `Bearer ${localStorage.getItem("token")}` }
-       }).then(res => {
-         setOnlineUsersId(res.data || []);
-       }).catch(() => {});
+       // Small delay to ensure backend has processed the connection and markOnline
+       setTimeout(() => {
+         axios.get(`${baseURL}/presence/online`, {
+           headers: { Authorization: `Bearer ${localStorage.getItem("token")}` }
+         }).then(res => {
+           setOnlineUsersId(res.data || []);
+         }).catch(() => {});
+       }, 500);
     }
   }, [connected, currentUser?.id]);
 
@@ -264,20 +307,11 @@ export function ChatProvider({ children }) {
 
   const sortedRooms = useMemo(() => {
     return [...filteredRooms].sort((a, b) => {
-      // First sort by online status
-      const aOtherMember = a.members?.find(m => m.id !== currentUser?.id);
-      const bOtherMember = b.members?.find(m => m.id !== currentUser?.id);
+      const aTime = new Date(a.lastMessage?.createdAt || a.updatedAt || a.createdAt || 0).getTime();
+      const bTime = new Date(b.lastMessage?.createdAt || b.updatedAt || b.createdAt || 0).getTime();
       
-      const aOnline = aOtherMember ? onlineUsersId.some(id => String(id) === String(aOtherMember.id)) : false;
-      const bOnline = bOtherMember ? onlineUsersId.some(id => String(id) === String(bOtherMember.id)) : false;
-
-      if (aOnline && !bOnline) return -1;
-      if (!aOnline && bOnline) return 1;
-
-      // If same online status, sort by time
-      const timeA = new Date(a.updatedAt || a.createdAt || 0).getTime();
-      const timeB = new Date(b.updatedAt || b.createdAt || 0).getTime();
-      return (isNaN(timeB) ? 0 : timeB) - (isNaN(timeA) ? 0 : timeA);
+      // WhatsApp style: Newest first
+      return (isNaN(bTime) ? 0 : bTime) - (isNaN(aTime) ? 0 : aTime);
     });
   }, [filteredRooms, onlineUsersId, currentUser?.id]);
 
@@ -299,6 +333,7 @@ export function ChatProvider({ children }) {
     setCurrentChat,
     onlineUsersId,
     setOnlineUsersId,
+    typingStatus,
     selectedImage,
     setSelectedImage,
     messages,

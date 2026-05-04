@@ -5,7 +5,7 @@ import Contact from "./Contact";
 import { MessageCircle } from "lucide-react";
 
 const ChatRooms = ({ onChatChange, onUserClick, onHideChat, onDeleteChat }) => {
-  const { sortedRooms = [], searchQuery, loading, currentChat, onlineUsersId } = useChat();
+  const { sortedRooms = [], searchQuery, loading, currentChat, onlineUsersId, typingStatus } = useChat();
   const { currentUser } = useAuth();
 
   const displayRooms = sortedRooms;
@@ -55,6 +55,7 @@ const ChatRooms = ({ onChatChange, onUserClick, onHideChat, onDeleteChat }) => {
             onlineUsersId={onlineUsersId}
             currentUser={currentUser}
             isSelected={currentChat?.id === room.id}
+            typingStatus={typingStatus}
             onHide={onHideChat}
             onDelete={onDeleteChat}
           />

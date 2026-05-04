@@ -37,7 +37,7 @@ const Avatar = ({ user, isOnline, isSelected }) => {
   );
 };
 
-export default function Contact({ chatRoom, onlineUsersId, currentUser, isSelected, onHide, onDelete }) {
+export default function Contact({ chatRoom, onlineUsersId, currentUser, isSelected, typingStatus = {}, onHide, onDelete }) {
   const [contact, setContact] = useState({});
   const [showMenu, setShowMenu] = useState(false);
   const menuRef = useRef(null);
@@ -152,7 +152,9 @@ export default function Contact({ chatRoom, onlineUsersId, currentUser, isSelect
           <p className={`text-[13px] truncate ${
             isSelected ? "text-[#6B7280]" : "text-[#6B7280]"
           }`}>
-            {lastMessage ? (
+            {typingStatus[chatRoom.id]?.isTyping ? (
+              <span className="text-primary font-bold animate-pulse italic">Typing...</span>
+            ) : lastMessage ? (
               <>
                 {lastMessage.sender === currentUser?.id && <span className="font-bold mr-1 opacity-70">You:</span>}
                 {(lastMessage.content || lastMessage.message) ? (lastMessage.content || lastMessage.message) : (lastMessage.imageUrl || lastMessage.fileUrl) ? "📷 Image" : "File"}
