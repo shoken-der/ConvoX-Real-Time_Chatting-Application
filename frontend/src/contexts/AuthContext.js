@@ -38,7 +38,11 @@ export function AuthProvider({ children }) {
       setCurrentUser(user);
       return user;
     } catch (err) {
-      setError(err.response?.data?.message || "Login failed");
+      if (err.response && (err.response.status === 401 || err.response.status === 403 || err.response.status === 400 || err.response.status === 404)) {
+        setError("Invalid email or password.");
+      } else {
+        setError(err.response?.data?.message || "Login failed. Please try again.");
+      }
       throw err;
     }
   };
@@ -60,11 +64,22 @@ export function AuthProvider({ children }) {
     }
   };
 
-  function logout() {
-    localStorage.removeItem("token");
-    localStorage.removeItem("user");
-    setCurrentUser(null);
-    setError("");
+  async function logout() {
+    try {
+      const token = localStorage.getItem("token");
+      if (token) {
+        await axios.post(`${API_BASE_URL}/api/presence/offline`, {}, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+      }
+    } catch (e) {
+      console.error("Failed to mark offline:", e);
+    } finally {
+      localStorage.removeItem("token");
+      localStorage.removeItem("user");
+      setCurrentUser(null);
+      setError("");
+    }
   }
 
   function clearAuth() {

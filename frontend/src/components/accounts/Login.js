@@ -29,7 +29,11 @@ export default function Login() {
       await login(email, password);
       // AuthContext updates currentUser, useEffect handles redirect
     } catch (e) {
-      setError(e.response?.data?.message || e.message || "Failed to login. Please check your credentials.");
+      if (e.response && (e.response.status === 401 || e.response.status === 403 || e.response.status === 400 || e.response.status === 404)) {
+        setError("Invalid email or password.");
+      } else {
+        setError(e.response?.data?.message || e.message || "Failed to login. Please check your credentials.");
+      }
     }
     setLoading(false);
   }
