@@ -8,7 +8,6 @@ const ChatContext = createContext();
 
 export function ChatProvider({ children }) {
   const { currentUser } = useAuth();
-  const [users, setUsers] = useState([]);
   const [chatRooms, setChatRooms] = useState([]);
   const [loading, setLoading] = useState(true);
   const [hasInitiallyLoaded, setHasInitiallyLoaded] = useState(false);
@@ -234,7 +233,10 @@ export function ChatProvider({ children }) {
       try { presenceSub.unsubscribe(); } catch (e) {}
     };
   }, [socket, currentUser?.id, connected, handleIncomingMessage]);
-
+  // ROOM-SPECIFIC SUBSCRIPTION: Restarts ONLY when chat changes
+  useEffect(() => {
+    if (!socket?.current?.connected || !currentChat?.id) return;
+    
     const roomSub = socket.current.subscribe(`/topic/chat/${currentChat.id}`, (frame) => {
       handleIncomingMessage(JSON.parse(frame.body));
     });
@@ -285,11 +287,6 @@ export function ChatProvider({ children }) {
     }
   }, [connected, currentUser?.id]);
 
-  const filteredUsers = useMemo(() => {
-    // We no longer render non-chat users in the sidebar search.
-    // This state is kept for the NewChatModal which fetches its own data.
-    return [];
-  }, []);
 
   const filteredRooms = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -320,9 +317,7 @@ export function ChatProvider({ children }) {
   }, []);
 
   const value = {
-    users,
     chatRooms,
-    filteredUsers,
     filteredRooms,
     sortedRooms,
     loading,

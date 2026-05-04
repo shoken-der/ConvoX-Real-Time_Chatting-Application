@@ -2,7 +2,6 @@ import { useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import useChat from "../../hooks/useChat";
 import { Search, Plus, MessageSquare, LogOut, X, Download } from "lucide-react";
-import MobileDrawer from "../chat/MobileDrawer";
 import ChatRooms from "../chat/ChatRooms";
 import Welcome from "../chat/Welcome";
 import ChatRoom from "../chat/ChatRoom";
@@ -15,7 +14,6 @@ export default function ChatLayout() {
   const { chatRooms, updateChatRooms, currentChat, setCurrentChat, searchQuery, setSearchQuery, refresh, selectedImage, setSelectedImage } = useChat();
   const { currentUser, logout } = useAuth();
   const navigate = useNavigate();
-  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isNewChatModalOpen, setIsNewChatModalOpen] = useState(false);
 
   const handleChatChange = useCallback(
