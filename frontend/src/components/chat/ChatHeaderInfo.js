@@ -12,7 +12,7 @@ export default function ChatHeaderInfo({ chatRoom, currentUser, onlineUsersId })
     return users.find((u) => u.id === (member.id || member)) || member;
   }, [chatRoom, currentUser?.id, users]);
 
-  const isOnline = onlineUsersId?.includes(contact.id);
+  const isOnline = onlineUsersId?.some(id => String(id) === String(contact.id));
 
   return (
     <div className="flex items-center justify-between w-full px-4 lg:px-6 py-2.5 bg-[#111827] border-b border-[#2A3245] relative z-50 shrink-0 min-h-[59px]">
