@@ -140,12 +140,7 @@ export default function ChatLayout() {
       <div className="flex-1 flex flex-col min-w-0 h-full">
         {!currentChat && (
           <div className="lg:hidden flex items-center justify-between px-4 py-3 bg-[#11131A] border-b border-[#1F2232] shrink-0 sticky top-0 z-20">
-            <button
-              onClick={() => setIsDrawerOpen(true)}
-              className="p-2 text-[#6B7280] active:scale-90 transition-transform"
-            >
-              <Menu size={22} />
-            </button>
+            <div className="w-9" /> {/* Spacer to keep ConvoX centered */}
             <h1 className="text-[16px] font-black tracking-tight">
               ConvoX
             </h1>
