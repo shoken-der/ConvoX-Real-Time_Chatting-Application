@@ -35,11 +35,16 @@ export function ChatProvider({ children }) {
 
   // Refs to avoid stale closures
   const currentChatRef = useRef(null);
+  const currentUserRef = useRef(null);  // always has the latest user — prevents stale closure in STOMP handler
   const fetchRequestIdRef = useRef(0); // Stale request guard
 
   useEffect(() => {
     currentChatRef.current = currentChat;
   }, [currentChat]);
+
+  useEffect(() => {
+    currentUserRef.current = currentUser;
+  }, [currentUser]);
 
   // Use our STOMP-based socket hook
   const { socket, connected, emit, on, subscribe } = useSocket();
@@ -154,10 +159,10 @@ export function ChatProvider({ children }) {
     // Helper to apply an update to a list of messages
     const updateMessageList = (prev) => {
       if (data.type === "REACTION") {
-        // Only apply REACTION events from the OTHER user.
-        // Our own reactions are already handled optimistically in Message.js,
-        // so applying them again from the STOMP echo would cause duplication/reappearance bugs.
-        if (String(data.senderId) === String(currentUser?.id)) return prev;
+        // Use ref to get the LATEST currentUser.id — avoids stale closure bug
+        // where the subscription was created before currentUser was populated.
+        const myId = currentUserRef.current?.id;
+        if (myId && String(data.senderId) === String(myId)) return prev;
         return prev.map(m => m.id === data.messageId ? { ...m, reactions: data.reactions } : m);
       } else if (data.type === "EDIT") {
         return prev.map(m => m.id === data.messageId ? { ...m, ...data, id: data.messageId, imageUrl: m.imageUrl || data.imageUrl } : m);
@@ -197,13 +202,14 @@ export function ChatProvider({ children }) {
         // Instant Seen: If this is a new message from the other person in the active chat,
         // mark it as seen — but ONLY if it has a real numeric ID (not a tempId from optimistic send)
         const isRealId = data.id && !String(data.id).startsWith("temp-");
+        const myId = currentUserRef.current?.id;
         if (
           activeChat &&
           String(roomId) === String(activeChat.id) &&
-          data.sender !== currentUser.id &&
+          data.sender !== myId &&
           isRealId
         ) {
-          markMessageSeen(data.id, currentUser.id).catch(() => {});
+          markMessageSeen(data.id, myId).catch(() => {});
         }
 
         return [...prev, { ...data, isUploading: data.isUploading === true }];
@@ -248,7 +254,7 @@ export function ChatProvider({ children }) {
         }
       });
     }
-  }, [fetchData, currentUser?.id]);
+  }, [fetchData]); // currentUser is accessed via ref — no need in dep array
 
   // Update typing status — called by useMessages to thread typing state up to context
   // (used by Contact.js sidebar "Typing..." label)
