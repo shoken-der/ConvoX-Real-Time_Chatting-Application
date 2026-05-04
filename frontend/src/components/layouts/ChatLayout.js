@@ -1,7 +1,7 @@
 import { useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import useChat from "../../hooks/useChat";
-import { Menu, Search, Plus, MessageSquare, LogOut, X, Download } from "lucide-react";
+import { Search, Plus, MessageSquare, LogOut, X, Download } from "lucide-react";
 import MobileDrawer from "../chat/MobileDrawer";
 import ChatRooms from "../chat/ChatRooms";
 import Welcome from "../chat/Welcome";
