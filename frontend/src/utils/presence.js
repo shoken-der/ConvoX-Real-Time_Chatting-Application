@@ -18,6 +18,6 @@ export function formatLastSeen(dateString) {
 
 export function getPresenceText(user, isOnline) {
   if (isOnline) return "Online";
-  if (user?.lastSeen) return formatLastSeen(user.lastSeen);
-  return "Last seen recently";
+  const lastSeen = user?.lastSeen ? formatLastSeen(user.lastSeen) : "recently";
+  return `Offline • ${lastSeen}`;
 }

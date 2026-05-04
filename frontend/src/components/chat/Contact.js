@@ -72,7 +72,7 @@ export default function Contact({ chatRoom, onlineUsersId, currentUser, isSelect
     fetchData();
   }, [chatRoom, currentUser?.id]);
 
-  const isOnline = onlineUsersId?.includes(contact.id);
+  const isOnline = onlineUsersId?.some(id => String(id) === String(contact.id));
   const lastMessage = chatRoom?.lastMessage;
 
   const timeString = useMemo(() => {

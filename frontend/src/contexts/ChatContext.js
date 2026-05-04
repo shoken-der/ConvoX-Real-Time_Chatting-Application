@@ -204,10 +204,10 @@ export function ChatProvider({ children }) {
       const data = JSON.parse(frame.body);
       setOnlineUsersId(prev => {
         if (data.online) {
-          if (prev.includes(data.userId)) return prev;
+          if (prev.some(id => String(id) === String(data.userId))) return prev;
           return [...prev, data.userId];
         } else {
-          return prev.filter(id => id !== data.userId);
+          return prev.filter(id => String(id) !== String(data.userId));
         }
       });
     });
@@ -268,8 +268,8 @@ export function ChatProvider({ children }) {
       const aOtherMember = a.members?.find(m => m.id !== currentUser?.id);
       const bOtherMember = b.members?.find(m => m.id !== currentUser?.id);
       
-      const aOnline = aOtherMember ? onlineUsersId.includes(aOtherMember.id) : false;
-      const bOnline = bOtherMember ? onlineUsersId.includes(bOtherMember.id) : false;
+      const aOnline = aOtherMember ? onlineUsersId.some(id => String(id) === String(aOtherMember.id)) : false;
+      const bOnline = bOtherMember ? onlineUsersId.some(id => String(id) === String(bOtherMember.id)) : false;
 
       if (aOnline && !bOnline) return -1;
       if (!aOnline && bOnline) return 1;
