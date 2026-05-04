@@ -51,6 +51,8 @@ export default function Register() {
       />
 
       
+      <ErrorMessage />
+
       {/* Decorative Blobs */}
       <div className="fixed top-[-10%] right-[-10%] w-[500px] h-[500px] bg-primary/10 rounded-full blur-[120px] pointer-events-none animate-pulse-glow"></div>
       <div className="fixed bottom-[-10%] left-[-10%] w-[500px] h-[500px] bg-secondary/10 rounded-full blur-[120px] pointer-events-none"></div>
@@ -64,7 +66,6 @@ export default function Register() {
           <p className="text-text-secondary text-[13px] font-medium">Create your premium account</p>
         </div>
 
-        <ErrorMessage />
 
         <form className="space-y-[15px]" onSubmit={handleRegister}>
           <div className="space-y-1.5">
