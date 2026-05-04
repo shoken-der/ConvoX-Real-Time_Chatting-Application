@@ -70,7 +70,7 @@ export default function EmailVerification() {
     try {
       await resendOtp(email);
       setError("");
-      addToast({ message: "Verification code resent successfully!", type: "success" });
+      addToast({ message: "Verification code sent successfully!", type: "success" });
     } catch (err) {}
     setResending(false);
   };
