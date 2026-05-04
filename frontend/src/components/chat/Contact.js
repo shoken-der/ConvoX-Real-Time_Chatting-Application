@@ -137,14 +137,6 @@ const Contact = memo(({ chatRoom, onlineUsersId, currentUser, isSelected, typing
                  {timeString}
                </span>
              )}
-             
-             {/* Menu Toggle */}
-             <button 
-               onClick={(e) => { e.stopPropagation(); setShowMenu(!showMenu); }}
-               className={`p-1 rounded-full hover:bg-[#2A3245] text-[#6B7280] transition-all opacity-0 group-hover:opacity-100 ${showMenu ? 'opacity-100' : ''}`}
-             >
-               <MoreVertical size={14} />
-             </button>
           </div>
         </div>
         
@@ -174,23 +166,6 @@ const Contact = memo(({ chatRoom, onlineUsersId, currentUser, isSelected, typing
           </button>
         </div>
       </div>
-
-      {/* Dropdown Menu */}
-      {showMenu && (
-        <div 
-          ref={menuRef}
-          className="absolute right-4 top-12 z-50 bg-surface-elevated rounded-2xl shadow-premium-lg border border-border/60 py-1.5 w-48 animate-zoom-in"
-          onClick={e => e.stopPropagation()}
-        >
-          <button 
-            onClick={handleHideClick}
-            className="w-full flex items-center gap-3 px-4 py-2.5 text-[13px] font-bold text-text-secondary hover:bg-surface-hover hover:text-text-main transition-colors"
-          >
-            <EyeOff size={16} />
-            <span>Hide from list</span>
-          </button>
-        </div>
-      )}
     </div>
   );
 });
