@@ -138,21 +138,6 @@ export default function ChatLayout() {
       />
 
       <div className="flex-1 flex flex-col min-w-0 h-full">
-        {!currentChat && (
-          <div className="lg:hidden flex items-center justify-between px-4 py-3 bg-[#11131A] border-b border-[#1F2232] shrink-0 sticky top-0 z-20">
-            <div className="w-9" /> {/* Spacer to keep ConvoX centered */}
-            <h1 className="text-[16px] font-black tracking-tight">
-              ConvoX
-            </h1>
-            <button
-              onClick={() => setIsNewChatModalOpen(true)}
-              className="p-2 w-9 h-9 rounded-xl bg-[#635BFF]/10 text-[#635BFF] flex items-center justify-center active:scale-90 transition-transform"
-            >
-              <Plus size={18} />
-            </button>
-          </div>
-        )}
-
         <div className="flex-1 flex min-w-0 overflow-hidden">
           <div
             className={`${
@@ -160,22 +145,24 @@ export default function ChatLayout() {
             } flex-col w-full md:w-[320px] lg:w-[340px] bg-[#111827] border-r border-[#1F2232] h-full shrink-0 relative z-10`}
           >
             <div className="p-6 pb-2 flex flex-col gap-6">
-              {/* Logo */}
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl bg-[#635BFF] flex items-center justify-center shadow-lg shadow-[#635BFF]/20">
-                  <MessageSquare className="text-white w-5 h-5" />
+              {/* Logo + New Chat Header */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-[#635BFF] flex items-center justify-center shadow-lg shadow-[#635BFF]/20">
+                    <MessageSquare className="text-white w-5 h-5" />
+                  </div>
+                  <h1 className="text-[20px] font-bold tracking-wide">ConvoX</h1>
                 </div>
-                <h1 className="text-[20px] font-bold tracking-wide">ConvoX</h1>
+                
+                {/* Compact New Chat Button for mobile/sidebar */}
+                <button
+                  onClick={() => setIsNewChatModalOpen(true)}
+                  className="p-2 w-9 h-9 rounded-xl bg-[#635BFF]/10 text-[#635BFF] hover:bg-[#635BFF]/20 flex items-center justify-center transition-all active:scale-90"
+                  title="New Chat"
+                >
+                  <Plus size={18} />
+                </button>
               </div>
-
-              {/* New Chat Button */}
-              <button
-                onClick={() => setIsNewChatModalOpen(true)}
-                className="w-full py-3 rounded-xl bg-[#635BFF] hover:bg-[#524ae0] text-white font-medium text-[14px] flex items-center justify-center gap-2 transition-colors shadow-lg shadow-[#635BFF]/10 active:scale-[0.98]"
-              >
-                <Plus size={18} />
-                New Chat
-              </button>
 
               {/* Search */}
               <div className="relative group">
