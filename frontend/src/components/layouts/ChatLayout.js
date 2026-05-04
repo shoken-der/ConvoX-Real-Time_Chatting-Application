@@ -146,7 +146,7 @@ export default function ChatLayout() {
           >
             <div className="p-6 pb-2 flex flex-col gap-6">
               {/* Logo + New Chat Header */}
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between w-full">
                 <div className="flex items-center gap-3">
                   <div className="w-9 h-9 rounded-xl bg-[#635BFF] flex items-center justify-center shadow-lg shadow-[#635BFF]/20">
                     <MessageSquare className="text-white w-5 h-5" />
@@ -154,13 +154,12 @@ export default function ChatLayout() {
                   <h1 className="text-[20px] font-bold tracking-wide">ConvoX</h1>
                 </div>
                 
-                {/* Compact New Chat Button for mobile/sidebar */}
                 <button
                   onClick={() => setIsNewChatModalOpen(true)}
-                  className="p-2 w-9 h-9 rounded-xl bg-[#635BFF]/10 text-[#635BFF] hover:bg-[#635BFF]/20 flex items-center justify-center transition-all active:scale-90"
+                  className="p-2 w-10 h-10 rounded-xl bg-[#635BFF]/10 text-[#635BFF] hover:bg-[#635BFF]/20 flex items-center justify-center transition-all active:scale-95 shadow-sm border border-[#635BFF]/20"
                   title="New Chat"
                 >
-                  <Plus size={18} />
+                  <Plus size={20} />
                 </button>
               </div>
 
