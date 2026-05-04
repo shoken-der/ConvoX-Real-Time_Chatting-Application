@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { toggleReaction, deleteMessage, editMessage } from "../../services/ChatService";
 
-const Message = memo(({ message, self, senderUser, onReply, socket, receiverId, onMessageUpdated, onImageClick }) => {
+const Message = memo(({ message, self, senderUser, onReply, socket, receiverId, onMessageUpdated, onReactionsUpdated, onImageClick }) => {
   const isDeleted = message.isDeleted || message.deleted;
   const senderId = message.sender?.id || message.senderId || message.sender;
   const isSelf = Boolean(self && senderId && String(self) === String(senderId));
@@ -21,15 +21,11 @@ const Message = memo(({ message, self, senderUser, onReply, socket, receiverId, 
   // Local optimistic reactions — allows immediate visual feedback before API response
   const [localReactions, setLocalReactions] = useState(message.reactions || []);
   const editInputRef = useRef();
-  // Reaction lock: after the user manually reacts, block the prop-sync useEffect
-  // for 5s so that any incoming SEEN/WebSocket events carrying stale reactions
-  // cannot override the user's confirmed local state.
-  const reactionLockRef = useRef(false);
-  const reactionLockTimerRef = useRef(null);
 
-  // Keep localReactions in sync ONLY when no manual interaction is pending
+  // Keep localReactions in sync when the message reactions prop updates
+  // (e.g. when the OTHER user reacts via REACTION STOMP event)
+  // This is now safe because updateLocalMessage no longer overwrites reactions.
   useEffect(() => {
-    if (reactionLockRef.current) return; // locked — user just reacted, trust local state
     setLocalReactions(message.reactions || []);
   }, [message.reactions]);
 
@@ -59,20 +55,15 @@ const Message = memo(({ message, self, senderUser, onReply, socket, receiverId, 
     }
 
     setLocalReactions(nextReactions);
-    // Lock prop-sync for 5s so incoming SEEN/echo events can't override this
-    reactionLockRef.current = true;
-    if (reactionLockTimerRef.current) clearTimeout(reactionLockTimerRef.current);
-    reactionLockTimerRef.current = setTimeout(() => {
-      reactionLockRef.current = false;
-    }, 5000);
     // --- End optimistic update ---
 
     try {
       const res = await toggleReaction(message.id, { userId: self, emoji });
       if (res && res.reactions !== undefined) {
         setLocalReactions(res.reactions);
-        onMessageUpdated && onMessageUpdated(res);
-        // Broadcast reaction update to other user via STOMP
+        // Dedicated reactions-only updater — never overwritten by SEEN/edit events
+        onReactionsUpdated && onReactionsUpdated(message.id, res.reactions);
+        // Broadcast to the other user via STOMP
         if (socket?.current?.connected) {
           socket.current.publish({
             destination: "/app/chat.reaction",
@@ -88,12 +79,9 @@ const Message = memo(({ message, self, senderUser, onReply, socket, receiverId, 
       }
     } catch (err) {
       console.error("Error toggling reaction:", err);
-      // Roll back optimistic update on failure and release lock
-      reactionLockRef.current = false;
-      if (reactionLockTimerRef.current) clearTimeout(reactionLockTimerRef.current);
       setLocalReactions(message.reactions || []);
     }
-  }, [localReactions, self, message, socket, onMessageUpdated]);
+  }, [localReactions, self, message, socket, onReactionsUpdated]);
 
   const handleDelete = async () => {
     // Optimistic update: show "This message was deleted" instantly

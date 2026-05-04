@@ -55,6 +55,7 @@ export default function ChatRoom() {
     isTyping,
     typingUser,
     updateLocalMessage,
+    updateLocalReactions,
     addLocalMessage,
     resolveOptimisticMessage
   } = useMessages(currentChat?.id, socket, currentUser?.id, connected);
@@ -279,6 +280,7 @@ export default function ChatRoom() {
             socket={socket}
             receiverId={currentChat.members.find((mem) => mem.id !== currentUser.id)?.id}
             onMessageUpdated={updateLocalMessage}
+            onReactionsUpdated={updateLocalReactions}
             onImageClick={(url) => setSelectedImage(url)}
           />
         </div>

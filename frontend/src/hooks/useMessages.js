@@ -86,9 +86,14 @@ export default function useMessages(currentChatId, socket, currentUserId, connec
   const updateLocalMessage = useCallback((updatedMsg) => {
     setMessages(prev => prev.map(m => {
       if (m.id === updatedMsg.id) {
+        // IMPORTANT: never overwrite reactions here.
+        // Reactions are managed exclusively by updateLocalReactions / REACTION STOMP events.
+        // SEEN / EDIT / DELETE responses carry stale reactions from the DB and must not override them.
+        const { reactions: _ignored, ...safeUpdate } = updatedMsg;
         return {
           ...m,
-          ...updatedMsg,
+          ...safeUpdate,
+          reactions: m.reactions || [], // always keep existing reactions
           imageUrl: updatedMsg.imageUrl || m.imageUrl,
           fileType: updatedMsg.fileType || m.fileType,
           fileSize: updatedMsg.fileSize || m.fileSize,
@@ -97,6 +102,13 @@ export default function useMessages(currentChatId, socket, currentUserId, connec
       }
       return m;
     }));
+  }, [setMessages]);
+
+  // Explicit reactions-only update — called after toggleReaction API call
+  const updateLocalReactions = useCallback((msgId, reactions) => {
+    setMessages(prev => prev.map(m =>
+      m.id === msgId ? { ...m, reactions } : m
+    ));
   }, [setMessages]);
 
   const addLocalMessage = useCallback((newMsg) => {
@@ -118,6 +130,7 @@ export default function useMessages(currentChatId, socket, currentUserId, connec
     isTyping,
     typingUser,
     updateLocalMessage,
+    updateLocalReactions,
     addLocalMessage,
     resolveOptimisticMessage
   };
